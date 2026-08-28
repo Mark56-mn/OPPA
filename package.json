@@ -1,0 +1,11 @@
+{
+  "name": "oppa",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "api:dev": "npm --workspace @oppa/api run dev",
+    "api:build": "npm --workspace @oppa/api run build",
+    "api:typecheck": "npm --workspace @oppa/api run typecheck"
+  }
+}
