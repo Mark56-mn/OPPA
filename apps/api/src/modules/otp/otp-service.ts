@@ -15,26 +15,18 @@ export class OtpService {
 
   async request(phone: string, now = new Date()): Promise<{ challengeId: string }> {
     const active = await this.repository.getActive(phone, now);
-    if (active) {
-      const secondsLeft = Math.max(1, Math.ceil((active.expiresAt.getTime() - now.getTime()) / 1000));
-      throw new Error(`OTP_ALREADY_ACTIVE:${secondsLeft}`);
-    }
+    if (active) throw new Error("OTP_ALREADY_ACTIVE");
 
     const latest = await this.repository.getLatestCreatedAt(phone);
-    if (latest) {
-      const secondsSinceLast = (now.getTime() - latest.getTime()) / 1000;
-      if (secondsSinceLast < otpPolicy.requestCooldownSeconds) {
-        throw new Error("OTP_RATE_LIMITED");
-      }
+    if (latest && (now.getTime() - latest.getTime()) / 1000 < otpPolicy.requestCooldownSeconds) {
+      throw new Error("OTP_RATE_LIMITED");
     }
 
     const hourlyCount = await this.repository.countCreatedSince(
       phone,
       new Date(now.getTime() - 60 * 60 * 1000)
     );
-    if (hourlyCount >= otpPolicy.maxRequestsPerHour) {
-      throw new Error("OTP_RATE_LIMITED");
-    }
+    if (hourlyCount >= otpPolicy.maxRequestsPerHour) throw new Error("OTP_RATE_LIMITED");
 
     const otp = generateOtp();
     const challenge = {
@@ -71,11 +63,9 @@ export class OtpService {
 
   async verify(phone: string, otp: string, now = new Date()): Promise<void> {
     const challenge = await this.repository.getActive(phone, now);
-
     if (!challenge || challenge.expiresAt <= now || challenge.consumedAt) {
       throw new Error("OTP_INVALID_OR_EXPIRED");
     }
-
     if (challenge.attempts >= otpPolicy.maxVerificationAttempts) {
       throw new Error("OTP_ATTEMPTS_EXCEEDED");
     }
@@ -85,8 +75,7 @@ export class OtpService {
       throw new Error("OTP_ATTEMPTS_EXCEEDED");
     }
 
-    const expected = hashOtp(phone, otp, this.pepper);
-    if (expected !== challenge.otpHash) {
+    if (hashOtp(phone, otp, this.pepper) !== challenge.otpHash) {
       throw new Error("OTP_INVALID_OR_EXPIRED");
     }
 
