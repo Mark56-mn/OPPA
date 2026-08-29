@@ -20,6 +20,22 @@ export class OtpService {
       throw new Error(`OTP_ALREADY_ACTIVE:${secondsLeft}`);
     }
 
+    const latest = await this.repository.getLatestCreatedAt(phone);
+    if (latest) {
+      const secondsSinceLast = (now.getTime() - latest.getTime()) / 1000;
+      if (secondsSinceLast < otpPolicy.requestCooldownSeconds) {
+        throw new Error("OTP_RATE_LIMITED");
+      }
+    }
+
+    const hourlyCount = await this.repository.countCreatedSince(
+      phone,
+      new Date(now.getTime() - 60 * 60 * 1000)
+    );
+    if (hourlyCount >= otpPolicy.maxRequestsPerHour) {
+      throw new Error("OTP_RATE_LIMITED");
+    }
+
     const otp = generateOtp();
     const challenge = {
       id: randomUUID(),
