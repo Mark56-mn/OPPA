@@ -26,6 +26,20 @@ export class PostgresSessionRepository implements SessionRepository {
     return result.rows[0];
   }
 
+  async findActiveByRefreshHash(refreshTokenHash: string, now: Date): Promise<SessionRecord | null> {
+    const result = await requireDb().query(
+      `select id, user_id as "userId", device_id as "deviceId",
+              expires_at as "expiresAt"
+       from public.oppa_sessions
+       where refresh_token_hash = $1
+         and revoked_at is null
+         and expires_at > $2
+       limit 1`,
+      [refreshTokenHash, now]
+    );
+    return result.rows[0] ?? null;
+  }
+
   async revoke(sessionId: string, revokedAt: Date): Promise<void> {
     await requireDb().query(
       `update public.oppa_sessions
