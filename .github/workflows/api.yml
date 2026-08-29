@@ -24,8 +24,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: apps/api/package.json
       - run: npm install
       - run: npm run typecheck
       - run: node --import tsx --test src/modules/otp/otp-crypto.test.ts
