@@ -21,6 +21,9 @@ export class PostgresIdentityRepository implements IdentityRepository {
     const result = await requireDb().query(
       `insert into public.oppa_users (phone_e164, phone_verified_at)
        values ($1, $2)
+       on conflict (phone_e164) do update
+       set phone_verified_at = excluded.phone_verified_at,
+           updated_at = now()
        returning id, phone_e164 as "phoneE164", status,
                  phone_verified_at as "phoneVerifiedAt"`,
       [phoneE164, verifiedAt]
