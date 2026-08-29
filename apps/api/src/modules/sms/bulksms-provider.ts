@@ -9,29 +9,40 @@ export class BulkSmsProvider implements SmsProvider {
       throw new Error("BULKSMS_API_TOKEN is not configured");
     }
 
-    const response = await fetch(`${env.bulkSmsBaseUrl}/api/sms`, {
+    const response = await fetch(`${env.bulkSmsBaseUrl}/sms`, {
       method: "POST",
       headers: {
+        Accept: "application/json",
         "Content-Type": "application/json",
         Authorization: `Bearer ${env.bulkSmsApiToken}`
       },
       body: JSON.stringify({
+        from: input.senderId,
         to: input.to,
-        message: input.message,
-        sender_id: input.senderId,
-        callback_url: input.callbackUrl
+        body: input.message,
+        gateway: "otp",
+        ...(input.callbackUrl ? { callback_url: input.callbackUrl } : {})
       })
     });
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(`BulkSMS request failed (${response.status}): ${body.slice(0, 500)}`);
+    const raw = await response.text();
+    let data: Record<string, unknown> = {};
+    try {
+      data = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      // Preserve a useful provider error below.
     }
 
-    const data = (await response.json()) as Record<string, unknown>;
+    if (!response.ok || data.status === "error") {
+      const message = typeof data.message === "string" ? data.message : raw.slice(0, 500);
+      throw new Error(`BulkSMS request failed (${response.status}): ${message}`);
+    }
+
+    const nested = data.data as Record<string, unknown> | undefined;
     const providerMessageId =
+      typeof nested?.message_id === "string" ? nested.message_id :
+      typeof nested?.id === "string" ? nested.id :
       typeof data.message_id === "string" ? data.message_id :
-      typeof data.messageId === "string" ? data.messageId :
       typeof data.id === "string" ? data.id : undefined;
 
     return {
