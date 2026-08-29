@@ -11,6 +11,7 @@ export interface OtpChallenge {
 export interface OtpRepository {
   invalidateActive(phone: string, now: Date): Promise<void>;
   create(challenge: OtpChallenge): Promise<void>;
+  setProviderMessageId(id: string, providerMessageId: string): Promise<void>;
   getActive(phone: string, now: Date): Promise<OtpChallenge | null>;
   consume(id: string, now: Date): Promise<void>;
   incrementAttempts(id: string): Promise<number>;
