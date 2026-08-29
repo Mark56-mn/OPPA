@@ -12,5 +12,8 @@ export interface SessionRepository {
     refreshTokenHash: string;
     expiresAt: Date;
   }): Promise<SessionRecord>;
+
+  findActiveByRefreshHash(refreshTokenHash: string, now: Date): Promise<SessionRecord | null>;
+
   revoke(sessionId: string, revokedAt: Date): Promise<void>;
 }
