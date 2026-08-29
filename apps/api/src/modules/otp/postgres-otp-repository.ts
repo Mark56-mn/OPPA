@@ -18,6 +18,29 @@ export class PostgresOtpRepository implements OtpRepository {
     );
   }
 
+  async getLatestCreatedAt(phone: string): Promise<Date | null> {
+    const result = await requireDb().query(
+      `select created_at
+       from public.otp_challenges
+       where phone_e164 = $1
+       order by created_at desc
+       limit 1`,
+      [phone]
+    );
+    return result.rows[0]?.created_at ?? null;
+  }
+
+  async countCreatedSince(phone: string, since: Date): Promise<number> {
+    const result = await requireDb().query(
+      `select count(*)::int as count
+       from public.otp_challenges
+       where phone_e164 = $1
+         and created_at >= $2`,
+      [phone, since]
+    );
+    return Number(result.rows[0].count);
+  }
+
   async create(challenge: OtpChallenge): Promise<void> {
     await requireDb().query(
       `insert into public.otp_challenges
