@@ -2,9 +2,19 @@ import express from "express";
 import helmet from "helmet";
 import { errorHandler } from "./http/error-handler.js";
 import { requestId } from "./http/request-id.js";
+import { db } from "./db/pool.js";
+import { env, requiredEnv } from "./config/env.js";
+import { createAuthRouter } from "./modules/auth/auth-routes.js";
+import { AuthService } from "./modules/auth/auth-service.js";
+import { PostgresIdentityRepository } from "./modules/identity/postgres-identity-repository.js";
+import { PostgresOtpRepository } from "./modules/otp/postgres-otp-repository.js";
+import { OtpService } from "./modules/otp/otp-service.js";
+import { BulkSmsProvider } from "./modules/sms/bulksms-provider.js";
+import { PostgresSessionRepository } from "./modules/session/postgres-session-repository.js";
+import { SessionService } from "./modules/session/session-service.js";
 
 const app = express();
-const port = Number(process.env.PORT ?? 8080);
+const port = env.port;
 
 app.disable("x-powered-by");
 app.use(helmet());
@@ -19,12 +29,41 @@ app.get("/health", (_req, res) => {
   });
 });
 
-app.get("/readiness", (_req, res) => {
-  res.status(200).json({
-    ready: true,
-    service: "oppa-api"
-  });
+app.get("/readiness", async (_req, res, next) => {
+  try {
+    if (!db) {
+      res.status(503).json({ ready: false, service: "oppa-api", reason: "DATABASE_NOT_CONFIGURED" });
+      return;
+    }
+
+    await db.query("select 1");
+    res.status(200).json({ ready: true, service: "oppa-api" });
+  } catch (error) {
+    next(error);
+  }
 });
+
+const authConfig = [env.otpPepper, env.refreshTokenPepper, env.accessTokenSecret];
+if (env.nodeEnv === "production" && authConfig.some((value) => !value)) {
+  throw new Error("Authentication secrets are not fully configured");
+}
+
+if (authConfig.every(Boolean)) {
+  const otp = new OtpService(
+    new PostgresOtpRepository(),
+    new BulkSmsProvider(),
+    requiredEnv("OPPA_OTP_PEPPER"),
+    env.bulkSmsSenderId,
+    env.bulkSmsCallbackUrl
+  );
+  const sessions = new SessionService(
+    new PostgresSessionRepository(),
+    requiredEnv("OPPA_REFRESH_TOKEN_PEPPER"),
+    requiredEnv("OPPA_ACCESS_TOKEN_SECRET")
+  );
+  const auth = new AuthService(otp, new PostgresIdentityRepository(), sessions);
+  app.use("/v1/auth", createAuthRouter(auth));
+}
 
 app.use((_req, res) => {
   res.status(404).json({ error: "NOT_FOUND", requestId: res.locals.requestId });
