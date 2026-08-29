@@ -21,7 +21,7 @@ export class OtpService {
     }
 
     const otp = generateOtp();
-    const challenge: Parameters<OtpRepository["create"]>[0] = {
+    const challenge = {
       id: randomUUID(),
       phone,
       otpHash: hashOtp(phone, otp, this.pepper),
@@ -43,8 +43,7 @@ export class OtpService {
       });
 
       if (result.providerMessageId) {
-        challenge.providerMessageId = result.providerMessageId;
-        await this.repository.create(challenge);
+        await this.repository.setProviderMessageId(challenge.id, result.providerMessageId);
       }
 
       return { challengeId: challenge.id };
@@ -56,6 +55,7 @@ export class OtpService {
 
   async verify(phone: string, otp: string, now = new Date()): Promise<void> {
     const challenge = await this.repository.getActive(phone, now);
+
     if (!challenge || challenge.expiresAt <= now || challenge.consumedAt) {
       throw new Error("OTP_INVALID_OR_EXPIRED");
     }
