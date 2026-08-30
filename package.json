@@ -8,6 +8,7 @@
     "api:build": "npm --workspace @oppa/api run build",
     "api:start": "npm --workspace @oppa/api run start",
     "api:typecheck": "npm --workspace @oppa/api run typecheck",
+    "build": "npm run api:build",
     "start": "npm run api:start"
   }
 }
