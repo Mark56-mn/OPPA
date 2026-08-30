@@ -6,6 +6,8 @@
   "scripts": {
     "api:dev": "npm --workspace @oppa/api run dev",
     "api:build": "npm --workspace @oppa/api run build",
-    "api:typecheck": "npm --workspace @oppa/api run typecheck"
+    "api:start": "npm --workspace @oppa/api run start",
+    "api:typecheck": "npm --workspace @oppa/api run typecheck",
+    "start": "npm run api:start"
   }
 }
