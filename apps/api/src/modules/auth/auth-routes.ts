@@ -24,13 +24,17 @@ export function createAuthRouter(auth: AuthService) {
     try {
       const phone = req.body?.phone;
       const code = req.body?.code;
+      const deviceId = req.body?.deviceId;
 
-      if (typeof phone !== "string" || typeof code !== "string") {
-        res.status(400).json({ error: "PHONE_AND_CODE_REQUIRED", requestId: res.locals.requestId });
+      if (typeof phone !== "string" || typeof code !== "string" || typeof deviceId !== "string") {
+        res.status(400).json({
+          error: "PHONE_CODE_AND_DEVICE_ID_REQUIRED",
+          requestId: res.locals.requestId
+        });
         return;
       }
 
-      const result = await auth.verifyOtp(phone, code);
+      const result = await auth.verifyOtp(phone, code, deviceId);
       res.status(200).json(result);
     } catch (error) {
       next(error);
