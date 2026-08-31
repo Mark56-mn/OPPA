@@ -23,5 +23,9 @@ create unique index if not exists oppa_wallet_transactions_reference_uidx
 create index if not exists oppa_wallet_transactions_user_created_idx
   on public.oppa_wallet_transactions(user_id, created_at desc);
 
+create unique index if not exists otp_challenges_one_active_per_phone_uidx
+  on public.otp_challenges(phone_e164)
+  where consumed_at is null;
+
 alter table public.oppa_wallets enable row level security;
 alter table public.oppa_wallet_transactions enable row level security;
