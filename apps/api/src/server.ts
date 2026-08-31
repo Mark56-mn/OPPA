@@ -56,6 +56,7 @@ if (env.nodeEnv === "production" && authConfig.some(v => !v)) {
 }
 
 if (authConfig.every(Boolean)) {
+  const sessionRepository = new PostgresSessionRepository();
   const devices = new DeviceService(new PostgresDeviceRepository());
   const otp = new OtpService(
     new PostgresOtpRepository(),
@@ -65,7 +66,7 @@ if (authConfig.every(Boolean)) {
     env.bulkSmsCallbackUrl
   );
   const sessions = new SessionService(
-    new PostgresSessionRepository(),
+    sessionRepository,
     requiredEnv("OPPA_REFRESH_TOKEN_PEPPER"),
     requiredEnv("OPPA_ACCESS_TOKEN_SECRET")
   );
@@ -74,7 +75,7 @@ if (authConfig.every(Boolean)) {
   app.use("/v1/auth", createAuthRouter(auth));
 
   const protectedRouter = express.Router();
-  protectedRouter.use(createRequireAuth(requiredEnv("OPPA_ACCESS_TOKEN_SECRET")));
+  protectedRouter.use(createRequireAuth(requiredEnv("OPPA_ACCESS_TOKEN_SECRET"), sessionRepository));
   protectedRouter.use("/profile", createProfileRouter(new PostgresProfileRepository()));
   protectedRouter.use("/contacts", createContactRouter(new PostgresContactRepository()));
   protectedRouter.use("/conversations", createConversationRouter(new PostgresConversationRepository()));
