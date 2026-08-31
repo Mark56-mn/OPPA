@@ -15,5 +15,14 @@ export interface SessionRepository {
 
   findActiveByRefreshHash(refreshTokenHash: string, now: Date): Promise<SessionRecord | null>;
 
+  rotate(input: {
+    sessionId: string;
+    newRefreshTokenHash: string;
+    expiresAt: Date;
+    now: Date;
+  }): Promise<SessionRecord | null>;
+
+  isActive(sessionId: string, userId: string, now: Date): Promise<boolean>;
+
   revoke(sessionId: string, revokedAt: Date): Promise<void>;
 }
