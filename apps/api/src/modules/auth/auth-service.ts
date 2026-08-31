@@ -24,6 +24,10 @@ export class AuthService {
     await this.otp.verify(phone, code);
     const now = new Date();
     const existing = await this.identities.findByPhone(phone);
+    if (existing && existing.status !== "active") {
+      throw new Error("ACCOUNT_UNAVAILABLE");
+    }
+
     const user = existing ?? await this.identities.createVerified(phone, now);
 
     if (existing && !existing.phoneVerifiedAt) {
