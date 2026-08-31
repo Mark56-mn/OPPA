@@ -21,11 +21,12 @@ export class SessionService {
       refreshTokenHash: hashRefreshToken(refreshToken, this.pepper),
       expiresAt: new Date(now + REFRESH_TTL_MS)
     });
+    const access = issueAccessToken(userId, record.id, this.accessTokenSecret, now);
 
     return {
       sessionId: record.id,
-      accessToken: issueAccessToken(userId, record.id, this.accessTokenSecret, now).token,
-      accessExpiresAt: new Date(now + ACCESS_TTL_MS).toISOString(),
+      accessToken: access.token,
+      accessExpiresAt: access.expiresAt.toISOString(),
       refreshToken
     };
   }
@@ -33,18 +34,38 @@ export class SessionService {
   async refresh(refreshToken: string) {
     if (!refreshToken || refreshToken.length > 512) throw new Error("REFRESH_TOKEN_INVALID");
     const now = new Date();
-    const record = await this.sessions.findActiveByRefreshHash(
+    const current = await this.sessions.findActiveByRefreshHash(
       hashRefreshToken(refreshToken, this.pepper),
       now
     );
-    if (!record) throw new Error("REFRESH_TOKEN_INVALID");
+    if (!current) throw new Error("REFRESH_TOKEN_INVALID");
 
-    const access = issueAccessToken(record.userId, record.id, this.accessTokenSecret, now.getTime());
+    const replacementToken = generateRefreshToken();
+    const replacement = await this.sessions.rotate({
+      sessionId: current.id,
+      newRefreshTokenHash: hashRefreshToken(replacementToken, this.pepper),
+      expiresAt: new Date(now.getTime() + REFRESH_TTL_MS),
+      now
+    });
+    if (!replacement) throw new Error("REFRESH_TOKEN_INVALID");
+
+    const access = issueAccessToken(
+      replacement.userId,
+      replacement.id,
+      this.accessTokenSecret,
+      now.getTime()
+    );
+
     return {
-      sessionId: record.id,
+      sessionId: replacement.id,
       accessToken: access.token,
-      accessExpiresAt: access.expiresAt.toISOString()
+      accessExpiresAt: access.expiresAt.toISOString(),
+      refreshToken: replacementToken
     };
+  }
+
+  async isActive(sessionId: string, userId: string) {
+    return this.sessions.isActive(sessionId, userId, new Date());
   }
 
   async revoke(sessionId: string) {
