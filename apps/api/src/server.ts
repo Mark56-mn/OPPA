@@ -25,6 +25,7 @@ import { PostgresContactRepository } from "./modules/contact/postgres-contact-re
 import { createContactRouter } from "./modules/contact/contact-routes.js";
 import { PostgresWalletRepository } from "./modules/wallet/postgres-wallet-repository.js";
 import { createWalletRouter } from "./modules/wallet/wallet-routes.js";
+import { PostgresWalletTransferRepository } from "./modules/wallet/postgres-wallet-transfer-repository.js";
 
 const app = express();
 const port = env.port;
@@ -33,43 +34,24 @@ app.use(helmet());
 app.use(requestId);
 app.use(express.json({ limit: "32kb" }));
 
-app.get("/health", (_req, res) => res.status(200).json({
-  ok: true, service: "oppa-api", timestamp: new Date().toISOString()
-}));
+app.get("/health", (_req, res) => res.status(200).json({ ok: true, service: "oppa-api", timestamp: new Date().toISOString() }));
 
 app.get("/readiness", async (_req, res, next) => {
   try {
-    if (!db) {
-      res.status(503).json({ ready: false, service: "oppa-api", reason: "DATABASE_NOT_CONFIGURED" });
-      return;
-    }
+    if (!db) return res.status(503).json({ ready: false, service: "oppa-api", reason: "DATABASE_NOT_CONFIGURED" });
     await db.query("select 1");
     res.status(200).json({ ready: true, service: "oppa-api" });
-  } catch (e) {
-    next(e);
-  }
+  } catch (e) { next(e); }
 });
 
 const authConfig = [env.otpPepper, env.refreshTokenPepper, env.accessTokenSecret];
-if (env.nodeEnv === "production" && authConfig.some(v => !v)) {
-  throw new Error("Authentication secrets are not fully configured");
-}
+if (env.nodeEnv === "production" && authConfig.some(v => !v)) throw new Error("Authentication secrets are not fully configured");
 
 if (authConfig.every(Boolean)) {
   const sessionRepository = new PostgresSessionRepository();
   const devices = new DeviceService(new PostgresDeviceRepository());
-  const otp = new OtpService(
-    new PostgresOtpRepository(),
-    new BulkSmsProvider(),
-    requiredEnv("OPPA_OTP_PEPPER"),
-    env.bulkSmsSenderId,
-    env.bulkSmsCallbackUrl
-  );
-  const sessions = new SessionService(
-    sessionRepository,
-    requiredEnv("OPPA_REFRESH_TOKEN_PEPPER"),
-    requiredEnv("OPPA_ACCESS_TOKEN_SECRET")
-  );
+  const otp = new OtpService(new PostgresOtpRepository(), new BulkSmsProvider(), requiredEnv("OPPA_OTP_PEPPER"), env.bulkSmsSenderId, env.bulkSmsCallbackUrl);
+  const sessions = new SessionService(sessionRepository, requiredEnv("OPPA_REFRESH_TOKEN_PEPPER"), requiredEnv("OPPA_ACCESS_TOKEN_SECRET"));
   const auth = new AuthService(otp, new PostgresIdentityRepository(), sessions, devices);
 
   app.use("/v1/auth", createAuthRouter(auth));
@@ -80,12 +62,10 @@ if (authConfig.every(Boolean)) {
   protectedRouter.use("/contacts", createContactRouter(new PostgresContactRepository()));
   protectedRouter.use("/conversations", createConversationRouter(new PostgresConversationRepository()));
   protectedRouter.use("/", createMessagingRouter(new PostgresMessageRepository()));
-  protectedRouter.use("/wallet", createWalletRouter(new PostgresWalletRepository()));
+  protectedRouter.use("/wallet", createWalletRouter(new PostgresWalletRepository(), new PostgresWalletTransferRepository()));
   app.use("/v1", protectedRouter);
 }
 
-app.use((_req, res) => res.status(404).json({
-  error: "NOT_FOUND", requestId: res.locals.requestId
-}));
+app.use((_req, res) => res.status(404).json({ error: "NOT_FOUND", requestId: res.locals.requestId }));
 app.use(errorHandler);
 app.listen(port, () => console.log(`OPPA API listening on port ${port}`));
