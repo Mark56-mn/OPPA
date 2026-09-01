@@ -26,16 +26,21 @@ import { createContactRouter } from "./modules/contact/contact-routes.js";
 import { PostgresWalletRepository } from "./modules/wallet/postgres-wallet-repository.js";
 import { createWalletRouter } from "./modules/wallet/wallet-routes.js";
 import { PostgresWalletTransferRepository } from "./modules/wallet/postgres-wallet-transfer-repository.js";
+import { PaystackProvider } from "./modules/payments/paystack-provider.js";
+import { FlutterwaveProvider } from "./modules/payments/flutterwave-provider.js";
+import { PostgresPaymentRepository } from "./modules/payments/postgres-payment-repository.js";
+import { PaymentService } from "./modules/payments/payment-service.js";
+import { createPaymentRouter } from "./modules/payments/payment-routes.js";
+import { createPaymentWebhookRouter } from "./modules/payments/payment-webhook-routes.js";
 
 const app = express();
 const port = env.port;
 app.disable("x-powered-by");
 app.use(helmet());
 app.use(requestId);
-app.use(express.json({ limit: "32kb" }));
+app.use(express.json({ limit: "32kb", verify: (req, _res, buf) => { (req as any).rawBody = Buffer.from(buf); } }));
 
 app.get("/health", (_req, res) => res.status(200).json({ ok: true, service: "oppa-api", timestamp: new Date().toISOString() }));
-
 app.get("/readiness", async (_req, res, next) => {
   try {
     if (!db) return res.status(503).json({ ready: false, service: "oppa-api", reason: "DATABASE_NOT_CONFIGURED" });
@@ -55,7 +60,6 @@ if (authConfig.every(Boolean)) {
   const auth = new AuthService(otp, new PostgresIdentityRepository(), sessions, devices);
 
   app.use("/v1/auth", createAuthRouter(auth));
-
   const protectedRouter = express.Router();
   protectedRouter.use(createRequireAuth(requiredEnv("OPPA_ACCESS_TOKEN_SECRET"), sessionRepository));
   protectedRouter.use("/profile", createProfileRouter(new PostgresProfileRepository()));
@@ -63,6 +67,13 @@ if (authConfig.every(Boolean)) {
   protectedRouter.use("/conversations", createConversationRouter(new PostgresConversationRepository()));
   protectedRouter.use("/", createMessagingRouter(new PostgresMessageRepository()));
   protectedRouter.use("/wallet", createWalletRouter(new PostgresWalletRepository(), new PostgresWalletTransferRepository()));
+
+  const providers:any = {};
+  if (env.paystackSecret) providers.paystack = new PaystackProvider(env.paystackSecret);
+  if (env.flutterwaveSecret && env.flutterwaveWebhookSecret) providers.flutterwave = new FlutterwaveProvider(env.flutterwaveSecret, env.flutterwaveWebhookSecret);
+  const payments = new PaymentService(new PostgresPaymentRepository(), providers);
+  protectedRouter.use("/payments", createPaymentRouter(payments));
+  app.use("/v1/payments/webhooks", createPaymentWebhookRouter(payments));
   app.use("/v1", protectedRouter);
 }
 
