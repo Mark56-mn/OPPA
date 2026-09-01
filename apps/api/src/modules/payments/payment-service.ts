@@ -1,24 +1,41 @@
 import { randomUUID } from "node:crypto";
 import type { PaymentProvider } from "./payment-provider.js";
-import type { PaymentRepository, PaymentRecord } from "./payment-repository.js";
+import type { PaymentRepository } from "./payment-repository.js";
+
 export class PaymentService {
-  constructor(private readonly repo:PaymentRepository, private readonly providers:Record<"paystack"|"flutterwave",PaymentProvider>) {}
-  async initialize(input:{userId:string;provider:"paystack"|"flutterwave";amountMinor:number;email:string;callbackUrl?:string}) {
-    if (!Number.isSafeInteger(input.amountMinor)||input.amountMinor<=0) throw new Error("PAYMENT_AMOUNT_INVALID");
+  constructor(private readonly repo: PaymentRepository, private readonly providers: Record<"paystack" | "flutterwave", PaymentProvider>) {}
+
+  async initialize(input: { userId: string; provider: "paystack" | "flutterwave"; amountMinor: number; email: string; callbackUrl?: string }) {
+    if (!Number.isSafeInteger(input.amountMinor) || input.amountMinor <= 0) throw new Error("PAYMENT_AMOUNT_INVALID");
+    if (input.amountMinor > Number.MAX_SAFE_INTEGER) throw new Error("PAYMENT_AMOUNT_INVALID");
     if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(input.email)) throw new Error("PAYMENT_EMAIL_INVALID");
-    const reference=`OPPA_${Date.now()}_${randomUUID().replaceAll("-","")}`;
-    const result=await this.providers[input.provider].initialize({amountMinor:input.amountMinor,email:input.email,reference,callbackUrl:input.callbackUrl});
-    return this.repo.create({userId:input.userId,provider:input.provider,reference,amountMinor:input.amountMinor,authorizationUrl:result.authorizationUrl});
+    const provider = this.providers[input.provider];
+    if (!provider) throw new Error("PAYMENT_PROVIDER_UNAVAILABLE");
+    const reference = `OPPA_${Date.now()}_${randomUUID().replaceAll("-", "")}`;
+    const result = await provider.initialize({ amountMinor: input.amountMinor, email: input.email, reference, callbackUrl: input.callbackUrl });
+    return this.repo.create({ userId: input.userId, provider: input.provider, reference, amountMinor: input.amountMinor, authorizationUrl: result.authorizationUrl });
   }
-  async handleWebhook(provider:"paystack"|"flutterwave",rawBody:Buffer,signature:string|undefined) {
-    const p=this.providers[provider];
-    if (!p.verifyWebhook(rawBody,signature)) throw new Error("PAYMENT_WEBHOOK_INVALID");
-    const body:any=JSON.parse(rawBody.toString("utf8"));
-    const reference=provider==="paystack"?body?.data?.reference:body?.data?.tx_ref;
-    if (typeof reference!=="string"||reference.length>160) throw new Error("PAYMENT_REFERENCE_INVALID");
-    const verified=await p.verify(reference);
-    if (verified.status!=="success") { await this.repo.markFailed(provider,reference); return {status:"failed"}; }
-    const payment=await this.repo.markPaidAndCredit({provider,reference:verified.reference,transactionId:verified.transactionId,amountMinor:verified.amountMinor});
-    return {status:"paid",payment};
+
+  async handleWebhook(providerName: "paystack" | "flutterwave", rawBody: Buffer, signature: string | undefined) {
+    const provider = this.providers[providerName];
+    if (!provider || !provider.verifyWebhook(rawBody, signature)) throw new Error("PAYMENT_WEBHOOK_INVALID");
+
+    let body: any;
+    try { body = JSON.parse(rawBody.toString("utf8")); } catch { throw new Error("PAYMENT_WEBHOOK_INVALID"); }
+
+    const reference = providerName === "paystack" ? body?.data?.reference : body?.data?.tx_ref;
+    if (typeof reference !== "string" || !/^[A-Za-z0-9._:-]{1,160}$/.test(reference)) throw new Error("PAYMENT_REFERENCE_INVALID");
+
+    const verified = await provider.verify(reference);
+    if (verified.reference !== reference || verified.currency !== "NGN") throw new Error("PAYMENT_CURRENCY_INVALID");
+    if (verified.status !== "success") { await this.repo.markFailed(providerName, reference); return { status: "failed" }; }
+
+    const payment = await this.repo.markPaidAndCredit({
+      provider: providerName,
+      reference,
+      transactionId: verified.transactionId,
+      amountMinor: verified.amountMinor
+    });
+    return { status: "paid", payment };
   }
 }
