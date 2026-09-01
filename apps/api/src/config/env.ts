@@ -3,7 +3,6 @@ export function requiredEnv(name: string): string {
   if (!value) throw new Error(`Missing required environment variable: ${name}`);
   return value;
 }
-
 export const env = {
   port: Number(process.env.PORT ?? 8080),
   nodeEnv: process.env.NODE_ENV ?? "development",
@@ -13,5 +12,8 @@ export const env = {
   bulkSmsCallbackUrl: process.env.BULKSMS_CALLBACK_URL,
   otpPepper: process.env.OPPA_OTP_PEPPER,
   refreshTokenPepper: process.env.OPPA_REFRESH_TOKEN_PEPPER,
-  accessTokenSecret: process.env.OPPA_ACCESS_TOKEN_SECRET
+  accessTokenSecret: process.env.OPPA_ACCESS_TOKEN_SECRET,
+  paystackSecret: process.env.PAYSTACK_SECRET_KEY,
+  flutterwaveSecret: process.env.FLUTTERWAVE_SECRET_KEY,
+  flutterwaveWebhookSecret: process.env.FLUTTERWAVE_WEBHOOK_SECRET
 };
