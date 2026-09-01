@@ -1,74 +1,13 @@
 import { db } from "../../db/pool.js";
 import type { PaymentRepository, PaymentRecord } from "./payment-repository.js";
-
-function requireDb() { if (!db) throw new Error("DATABASE_URL is not configured"); return db; }
-function map(row:any): PaymentRecord { return { ...row, amountMinor: Number(row.amountMinor) }; }
-
-export class PostgresPaymentRepository implements PaymentRepository {
-  async create(input:any) {
-    const r=await requireDb().query(
-      "insert into public.oppa_payments (user_id,provider,reference,amount_minor,currency,status,authorization_url) values ($1,$2,$3,$4,'NGN','pending',$5) on conflict (provider,reference) do update set updated_at=now() returning id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,authorization_url as \"authorizationUrl\",risk_score as \"riskScore\",risk_decision as \"riskDecision\"",
-      [input.userId,input.provider,input.reference,input.amountMinor,input.authorizationUrl]);
-    return map(r.rows[0]);
-  }
-
-  async find(userId:string,reference:string) {
-    const r=await requireDb().query(
-      "select id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,authorization_url as \"authorizationUrl\",risk_score as \"riskScore\",risk_decision as \"riskDecision\" from public.oppa_payments where user_id=$1 and reference=$2 limit 1",
-      [userId,reference]);
-    return r.rows[0] ? map(r.rows[0]) : null;
-  }
-
-  async list(userId:string,limit:number,offset:number) {
-    const r=await requireDb().query(
-      "select id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,risk_score as \"riskScore\",risk_decision as \"riskDecision\",authorization_url as \"authorizationUrl\",created_at as \"createdAt\",paid_at as \"paidAt\" from public.oppa_payments where user_id=$1 order by created_at desc limit $2 offset $3",
-      [userId,limit,offset]);
-    return r.rows.map(map);
-  }
-
-  async setRisk(id:string,score:number,decision:"allow"|"review"|"block",reasons:string[]) {
-    const d=requireDb();
-    const c=await d.connect();
-    try {
-      await c.query("begin");
-      const r=await c.query("update public.oppa_payments set risk_score=$2,risk_decision=$3,updated_at=now() where id=$1 and status='pending' returning id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,authorization_url as \"authorizationUrl\",risk_score as \"riskScore\",risk_decision as \"riskDecision\"",[id,score,decision]);
-      if(!r.rows[0]) throw new Error("PAYMENT_NOT_FOUND");
-      await c.query("insert into public.oppa_payment_risk_events(payment_id,user_id,risk_score,decision,reasons) values($1,$2,$3,$4,$5::jsonb)",[id,r.rows[0].userId,score,decision,JSON.stringify(reasons)]);
-      await c.query("commit");
-      return map(r.rows[0]);
-    } catch(e) { try { await c.query("rollback"); } catch {} throw e; } finally { c.release(); }
-  }
-
-  async markPaidAndCredit(input:any) {
-    const client=await requireDb().connect();
-    try {
-      await client.query("begin");
-      const r=await client.query("select id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,authorization_url as \"authorizationUrl\",risk_decision as \"riskDecision\" from public.oppa_payments where provider=$1 and reference=$2 for update",[input.provider,input.reference]);
-      if(!r.rows[0]) throw new Error("PAYMENT_NOT_FOUND");
-      const p=map(r.rows[0]);
-      if(p.amountMinor!==input.amountMinor || p.currency!=="NGN") throw new Error("PAYMENT_AMOUNT_MISMATCH");
-      if(p.status==="paid") { if(p.providerTransactionId && p.providerTransactionId!==input.transactionId) throw new Error("PAYMENT_TRANSACTION_MISMATCH"); await client.query("commit"); return p; }
-      if(p.status==="reversed") throw new Error("PAYMENT_ALREADY_REVERSED");
-      if(p.riskDecision==="block") throw new Error("PAYMENT_RISK_BLOCKED");
-      if(p.riskDecision==="review") throw new Error("PAYMENT_REQUIRES_REVIEW");
-
-      await client.query("insert into public.oppa_wallets (user_id,currency) values ($1,'NGN') on conflict (user_id) do nothing",[p.userId]);
-      const wallet=await client.query("update public.oppa_wallets set balance_minor=balance_minor+$2::bigint,updated_at=now() where user_id=$1 returning balance_minor",[p.userId,p.amountMinor]);
-      if(!wallet.rows[0]) throw new Error("USER_NOT_FOUND");
-
-      const reference="payment:"+p.provider+":"+p.reference;
-      const tx=await client.query("insert into public.oppa_wallet_transactions (user_id,type,amount_minor,balance_after_minor,reference,description) values ($1,'credit',$2,$3,$4,$5) on conflict (reference) do nothing returning id",[p.userId,p.amountMinor,wallet.rows[0].balance_minor,reference,"Wallet funding"]);
-      if(!tx.rows[0]) throw new Error("WALLET_REFERENCE_REUSED");
-
-      const updated=await client.query("update public.oppa_payments set status='paid',provider_transaction_id=$2,provider_status='success',paid_at=now(),updated_at=now() where id=$1 and status='pending' returning id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,authorization_url as \"authorizationUrl\",risk_score as \"riskScore\",risk_decision as \"riskDecision\"",[p.id,input.transactionId]);
-      if(!updated.rows[0]) throw new Error("PAYMENT_STATE_RACE");
-      await client.query("insert into public.oppa_audit_events(actor_user_id,event_type,entity_type,entity_id,metadata) values($1,$2,$3,$4,$5::jsonb)",[p.userId,"payment.settled","payment",p.id,JSON.stringify({provider:p.provider,reference:p.reference,amountMinor:p.amountMinor})]);
-      await client.query("commit");
-      return map(updated.rows[0]);
-    } catch(e) { try { await client.query("rollback"); } catch {} throw e; } finally { client.release(); }
-  }
-
-  async markFailed(provider:"paystack"|"flutterwave",reference:string) {
-    await requireDb().query("update public.oppa_payments set status='failed',updated_at=now() where provider=$1 and reference=$2 and status='pending'",[provider,reference]);
-  }
+function requireDb(){if(!db)throw new Error("DATABASE_URL is not configured");return db}
+function map(row:any):PaymentRecord{return {...row,amountMinor:Number(row.amountMinor)}}
+export class PostgresPaymentRepository implements PaymentRepository{
+ async create(i:any){const r=await requireDb().query("insert into public.oppa_payments(user_id,provider,reference,amount_minor,currency,status,authorization_url) values($1,$2,$3,$4,'NGN','pending',$5) on conflict(provider,reference) do update set updated_at=now() returning id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,authorization_url as \"authorizationUrl\",risk_score as \"riskScore\",risk_decision as \"riskDecision\"",[i.userId,i.provider,i.reference,i.amountMinor,i.authorizationUrl]);return map(r.rows[0])}
+ async find(userId:string,reference:string){const r=await requireDb().query("select id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,authorization_url as \"authorizationUrl\",risk_score as \"riskScore\",risk_decision as \"riskDecision\" from public.oppa_payments where user_id=$1 and reference=$2 limit 1",[userId,reference]);return r.rows[0]?map(r.rows[0]):null}
+ async findByProviderReference(provider:"paystack"|"flutterwave",reference:string){const r=await requireDb().query("select id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,authorization_url as \"authorizationUrl\",risk_score as \"riskScore\",risk_decision as \"riskDecision\" from public.oppa_payments where provider=$1 and reference=$2 limit 1",[provider,reference]);return r.rows[0]?map(r.rows[0]):null}
+ async list(userId:string,limit:number,offset:number){const r=await requireDb().query("select id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,risk_score as \"riskScore\",risk_decision as \"riskDecision\",authorization_url as \"authorizationUrl\",created_at as \"createdAt\",paid_at as \"paidAt\" from public.oppa_payments where user_id=$1 order by created_at desc limit $2 offset $3",[userId,limit,offset]);return r.rows.map(map)}
+ async setRisk(id:string,score:number,decision:"allow"|"review"|"block",reasons:string[]){const d=requireDb();const c=await d.connect();try{await c.query("begin");const r=await c.query("update public.oppa_payments set risk_score=$2,risk_decision=$3,updated_at=now() where id=$1 and status='pending' returning id,user_id as \"userId\",provider,reference,amount_minor as \"amountMinor\",currency,status,risk_score as \"riskScore\",risk_decision as \"riskDecision\",authorization_url as \"authorizationUrl\"",[id,score,decision]);if(!r.rows[0])throw Error("PAYMENT_NOT_FOUND");await c.query("insert into public.oppa_payment_risk_events(payment_id,user_id,risk_score,decision,reasons) values($1,$2,$3,$4,$5::jsonb)",[id,r.rows[0].userId,score,decision,JSON.stringify(reasons)]);await c.query("insert into public.oppa_audit_events(actor_user_id,event_type,entity_type,entity_id,metadata) values($1,'payment.risk_decision','payment',$2,$3::jsonb)",[r.rows[0].userId,id,JSON.stringify({score,decision,reasons})]);await c.query("commit");return map(r.rows[0])}catch(e){try{await c.query("rollback")}catch{}throw e}finally{c.release()}}
+ async markPaidAndCredit(input:any){const client=await requireDb().connect();try{await client.query("begin");const r=await client.query("select id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,authorization_url as \"authorizationUrl\",risk_score as \"riskScore\",risk_decision as \"riskDecision\" from public.oppa_payments where provider=$1 and reference=$2 for update",[input.provider,input.reference]);if(!r.rows[0])throw Error("PAYMENT_NOT_FOUND");const p=map(r.rows[0]);if(p.amountMinor!==input.amountMinor||p.currency!=="NGN")throw Error("PAYMENT_AMOUNT_MISMATCH");if(p.status==="paid"){if(p.providerTransactionId&&p.providerTransactionId!==input.transactionId)throw Error("PAYMENT_TRANSACTION_MISMATCH");await client.query("commit");return p}if(p.status==="reversed")throw Error("PAYMENT_ALREADY_REVERSED");if(p.riskDecision!=="allow")throw Error(p.riskDecision==="block"?"PAYMENT_RISK_BLOCKED":p.riskDecision==="review"?"PAYMENT_REQUIRES_REVIEW":"PAYMENT_RISK_NOT_EVALUATED");await client.query("insert into public.oppa_wallets(user_id,currency) values($1,'NGN') on conflict(user_id) do nothing",[p.userId]);const wallet=await client.query("update public.oppa_wallets set balance_minor=balance_minor+$2::bigint,updated_at=now() where user_id=$1 returning balance_minor",[p.userId,p.amountMinor]);if(!wallet.rows[0])throw Error("USER_NOT_FOUND");const reference="payment:"+p.provider+":"+p.reference;const tx=await client.query("insert into public.oppa_wallet_transactions(user_id,type,amount_minor,balance_after_minor,reference,description) values($1,'credit',$2,$3,$4,$5) on conflict(reference) do nothing returning id",[p.userId,p.amountMinor,wallet.rows[0].balance_minor,reference,"Wallet funding"]);if(!tx.rows[0])throw Error("WALLET_REFERENCE_REUSED");const updated=await client.query("update public.oppa_payments set status='paid',provider_transaction_id=$2,provider_status='success',paid_at=now(),updated_at=now() where id=$1 and status='pending' returning id,user_id as \"userId\",provider,reference,provider_transaction_id as \"providerTransactionId\",amount_minor as \"amountMinor\",currency,status,authorization_url as \"authorizationUrl\",risk_score as \"riskScore\",risk_decision as \"riskDecision\"",[p.id,input.transactionId]);if(!updated.rows[0])throw Error("PAYMENT_STATE_RACE");await client.query("insert into public.oppa_audit_events(actor_user_id,event_type,entity_type,entity_id,metadata) values($1,'payment.settled','payment',$2,$3::jsonb)",[p.userId,p.id,JSON.stringify({provider:p.provider,reference:p.reference,amountMinor:p.amountMinor})]);await client.query("commit");return map(updated.rows[0])}catch(e){try{await client.query("rollback")}catch{}throw e}finally{client.release()}}
+ async markFailed(provider:"paystack"|"flutterwave",reference:string){await requireDb().query("update public.oppa_payments set status='failed',updated_at=now() where provider=$1 and reference=$2 and status='pending'",[provider,reference])}
 }
