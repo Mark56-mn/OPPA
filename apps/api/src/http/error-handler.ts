@@ -22,7 +22,8 @@ const statuses: Record<string, number> = {
   WALLET_BALANCE_INVALID: 500,
   WALLET_REFERENCE_INVALID: 400,
   WALLET_REFERENCE_REUSED: 409,
-  WALLET_INSUFFICIENT_FUNDS: 409
+  WALLET_INSUFFICIENT_FUNDS: 409,
+  WALLET_TRANSFER_SELF: 400
 };
 
 export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
