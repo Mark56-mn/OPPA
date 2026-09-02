@@ -1,15 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import assert from "node:assert/strict";
+import test from "node:test";
 import { DefaultSensitiveAuthorization } from "./default-sensitive-authorization.js";
-describe("DefaultSensitiveAuthorization",()=>{
- it("fails closed when device proof fails",async()=>{
-  const proofs={verify:vi.fn().mockRejectedValue(new Error("DEVICE_PROOF_INVALID"))};
+test("fails closed when device proof fails",async()=>{
+  const proofs={verify:async()=>{throw new Error("DEVICE_PROOF_INVALID")}};
   const auth=new DefaultSensitiveAuthorization(proofs as any);
-  await expect(auth.authorize({userId:"u1",operation:"wallet_transfer",proof:{deviceId:"d1",challenge:"c",signature:"s"}})).rejects.toThrow("DEVICE_PROOF_INVALID");
- });
- it("allows only after device proof succeeds",async()=>{
-  const proofs={verify:vi.fn().mockResolvedValue(true)};
+  await assert.rejects(auth.authorize({userId:"u1",operation:"wallet_transfer",proof:{deviceId:"d1",challenge:"c",signature:"s"}}),{message:"DEVICE_PROOF_INVALID"});
+});
+test("allows only after device proof succeeds",async()=>{
+  let received:unknown;
+  const proofs={verify:async(...args:unknown[])=>{received=args;return true}};
   const auth=new DefaultSensitiveAuthorization(proofs as any);
-  await expect(auth.authorize({userId:"u1",operation:"payment_reversal",proof:{deviceId:"d1",challenge:"c",signature:"s"}})).resolves.toBe(true);
-  expect(proofs.verify).toHaveBeenCalledWith("u1","payment_reversal",{deviceId:"d1",challenge:"c",signature:"s"});
- });
+  assert.equal(await auth.authorize({userId:"u1",operation:"payment_reversal",proof:{deviceId:"d1",challenge:"c",signature:"s"}}),true);
+  assert.deepEqual(received,["u1","payment_reversal",{deviceId:"d1",challenge:"c",signature:"s"}]);
 });

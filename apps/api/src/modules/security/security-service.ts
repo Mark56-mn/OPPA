@@ -18,7 +18,7 @@ export class SecurityService{
   const a=Buffer.from(record.challengeHash,"utf8"), b=Buffer.from(hash(challenge),"utf8");
   if(a.length!==b.length||!timingSafeEqual(a,b)){await this.security.incrementChallengeAttempt(record.id);throw Error("STEP_UP_INVALID");}
   if(!await this.security.consumeChallenge(record.id,new Date()))throw Error("STEP_UP_INVALID");
-  await this.security.recordEvent({userId,deviceId:record.deviceId,eventType:"security.step_up_consumed",severity:"info",metadata:{purpose}});
+  await this.security.recordEvent({userId,deviceId:record.deviceId??undefined,eventType:"security.step_up_consumed",severity:"info",metadata:{purpose}});
   return true;
  }
 }
