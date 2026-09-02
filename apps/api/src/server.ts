@@ -32,6 +32,11 @@ import { PostgresPaymentRepository } from "./modules/payments/postgres-payment-r
 import { PaymentService } from "./modules/payments/payment-service.js";
 import { createPaymentRouter } from "./modules/payments/payment-routes.js";
 import { createPaymentWebhookRouter } from "./modules/payments/payment-webhook-routes.js";
+import { SecurityService } from "./modules/security/security-service.js";
+import { PostgresSecurityProofRepository } from "./modules/security/postgres-security-proof-repository.js";
+import { DeviceProofService } from "./modules/security/device-proof-service.js";
+import { DefaultSensitiveAuthorization } from "./modules/security/default-sensitive-authorization.js";
+import { createSecurityRouter } from "./modules/security/security-routes.js";
 
 const app = express();
 const port = env.port;
@@ -62,16 +67,23 @@ if (authConfig.every(Boolean)) {
   app.use("/v1/auth", createAuthRouter(auth));
   const protectedRouter = express.Router();
   protectedRouter.use(createRequireAuth(requiredEnv("OPPA_ACCESS_TOKEN_SECRET"), sessionRepository));
+
+  const securityRepository = new PostgresSecurityProofRepository();
+  const security = new SecurityService(securityRepository);
+  const deviceProofs = new DeviceProofService(securityRepository);
+  const sensitiveAuthorization = new DefaultSensitiveAuthorization(deviceProofs);
+
+  protectedRouter.use("/security", createSecurityRouter(security));
   protectedRouter.use("/profile", createProfileRouter(new PostgresProfileRepository()));
   protectedRouter.use("/contacts", createContactRouter(new PostgresContactRepository()));
   protectedRouter.use("/conversations", createConversationRouter(new PostgresConversationRepository()));
   protectedRouter.use("/", createMessagingRouter(new PostgresMessageRepository()));
-  protectedRouter.use("/wallet", createWalletRouter(new PostgresWalletRepository(), new PostgresWalletTransferRepository()));
+  protectedRouter.use("/wallet", createWalletRouter(new PostgresWalletRepository(), new PostgresWalletTransferRepository(), sensitiveAuthorization));
 
   const providers:any = {};
   if (env.paystackSecret) providers.paystack = new PaystackProvider(env.paystackSecret);
   if (env.flutterwaveSecret && env.flutterwaveWebhookSecret) providers.flutterwave = new FlutterwaveProvider(env.flutterwaveSecret, env.flutterwaveWebhookSecret);
-  const payments = new PaymentService(new PostgresPaymentRepository(), providers);
+  const payments = new PaymentService(new PostgresPaymentRepository(), providers, sensitiveAuthorization);
   protectedRouter.use("/payments", createPaymentRouter(payments));
   app.use("/v1/payments/webhooks", createPaymentWebhookRouter(payments));
   app.use("/v1", protectedRouter);
@@ -79,4 +91,4 @@ if (authConfig.every(Boolean)) {
 
 app.use((_req, res) => res.status(404).json({ error: "NOT_FOUND", requestId: res.locals.requestId }));
 app.use(errorHandler);
-app.listen(port, () => console.log(`OPPA API listening on port ${port}`));
+app.listen(port, () => console.log(\`OPPA API listening on port \${port}\`));
