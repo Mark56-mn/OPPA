@@ -91,4 +91,4 @@ if (authConfig.every(Boolean)) {
 
 app.use((_req, res) => res.status(404).json({ error: "NOT_FOUND", requestId: res.locals.requestId }));
 app.use(errorHandler);
-app.listen(port, () => console.log(\`OPPA API listening on port \${port}\`));
+app.listen(port, () => console.log(`OPPA API listening on port ${port}`));

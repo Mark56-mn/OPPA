@@ -39,3 +39,30 @@ Do not assume tests, builds, migrations, deployment or integrations passed unles
 4. Complete adversarial security tests.
 5. Verify actual wallet/payment route wiring.
 6. Move to Risk & Abuse only after Security Core passes.
+
+## Audit update — 2026-09-02
+
+### Completed in this session
+- Audited Security Core route wiring and executable checks.
+- Restored the API test suite by converting Security Core tests from an unavailable Vitest dependency to the repository's Node test runner.
+- Fixed device-proof verification so it validates the presented challenge hash before verifying the device signature, atomically consumes the persisted challenge, and records/increments failures for invalid signatures or unavailable active keys.
+- Mapped Security Core validation failures to intentional HTTP statuses.
+- Fixed the server startup template literal that prevented TypeScript compilation.
+- Restored `PostgresSecurityRepository` conformance with active-device validation.
+
+### Tests actually run
+- `npm test --workspace @oppa/api` — passed: 22 tests.
+- `npm run api:typecheck` — passed.
+- `npm run build` — passed.
+- `git diff --check` — passed.
+
+### Remaining next tasks
+1. Add route-level/integration tests against a real PostgreSQL test database for concurrent challenge consumption and wallet/payment sensitive-operation wiring.
+2. Review the inactive legacy `PostgresSecurityRepository` usage and consolidate security persistence implementations if it is not needed.
+3. Continue the Security Core adversarial audit before starting Risk & Abuse.
+
+## Risk & Abuse update — 2026-09-02
+- Added 24-hour payment velocity signals (recent paid and failed payment counts) to server-side payment risk evaluation before wallet settlement.
+- Added unit coverage for allow, review, and block risk thresholds.
+- Verified `npm test --workspace @oppa/api` (25 tests), `npm run api:typecheck`, `npm run build`, and `git diff --check`.
+- Commit: `95d50ca feat: apply payment risk velocity checks`.
