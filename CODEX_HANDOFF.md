@@ -1,62 +1,127 @@
 # Codex Handoff
 
 ## Purpose
-This file is the durable handoff for autonomous Codex sessions. Update it whenever a session ends because of credits, time, environment limits, or another interruption.
+Durable handoff for autonomous Codex sessions. Update this file whenever a session ends because of credits, context, time, environment limits or interruption.
 
 ## Last initialized
 2026-09-02
 
-## Current focus
-Security Core verification/integration, then Risk & Abuse, then Notifications/Event Delivery.
+## Read first
+1. `OPPA_MASTER_BUILD_SPEC.md` — complete application/product/build map.
+2. `CODEX_AUTOPILOT.md` — autonomous operating contract.
+3. This file — current durable session state.
 
-## Completed before this handoff
-- Authentication/session foundation
-- Device registration/session controls
-- Profile/contact/messaging foundations
-- Wallet ledger and transfer foundation
-- Payment provider/service foundation
-- Security Core step-up challenges
-- Active-device validation
-- Device-bound signature verification
-- Sensitive-operation authorization
-- Wallet transfer security authorization
-- Payment reversal security authorization
-- Security-focused tests
+## Current repository reality
+The OPPA repository already contains a substantial TypeScript backend foundation under `apps/api/src`, including Auth/OTP/Identity/Device/Session/SMS, Profile, Contact, Messaging, Wallet, Payments, Admin and Security modules. Database migrations and Codex documentation are also present.
 
-## Latest durable build contract
-See CODEX_AUTOPILOT.md.
+Do not rebuild the foundation blindly. Inspect the actual current branch, code, migrations and tests before changing anything.
 
-## Audit requirement
-The next agent must inspect the actual repository state and git history, verify all claims, run available checks, and fix incomplete or insecure wiring before starting unrelated work.
+## Current verified history carried forward
+The previous Security Core audit recorded:
+- API test suite restored to the repository's Node test runner.
+- Device-proof verification validates the presented challenge hash before device signature verification.
+- Persisted challenges are atomically consumed.
+- Invalid signatures/unavailable active keys record/increment failures.
+- Security validation failures map to intentional HTTP statuses.
+- Server startup TypeScript issue fixed.
+- `PostgresSecurityRepository` restored to active-device validation conformance.
 
-## Do not assume
-Do not assume tests, builds, migrations, deployment or integrations passed unless execution evidence exists.
-
-## Next tasks
-1. Inspect Security Core current files and git history.
-2. Run build/typecheck/test commands in an executable environment.
-3. Resolve all failures.
-4. Complete adversarial security tests.
-5. Verify actual wallet/payment route wiring.
-6. Move to Risk & Abuse only after Security Core passes.
-
-## Audit update — 2026-09-02
-
-### Completed in this session
-- Audited Security Core route wiring and executable checks.
-- Restored the API test suite by converting Security Core tests from an unavailable Vitest dependency to the repository's Node test runner.
-- Fixed device-proof verification so it validates the presented challenge hash before verifying the device signature, atomically consumes the persisted challenge, and records/increments failures for invalid signatures or unavailable active keys.
-- Mapped Security Core validation failures to intentional HTTP statuses.
-- Fixed the server startup template literal that prevented TypeScript compilation.
-- Restored `PostgresSecurityRepository` conformance with active-device validation.
-
-### Tests actually run
-- `npm test --workspace @oppa/api` — passed: 22 tests.
+Historical checks recorded as passed:
+- `npm test --workspace @oppa/api` — 22 tests.
 - `npm run api:typecheck` — passed.
 - `npm run build` — passed.
 - `git diff --check` — passed.
 
-### Remaining next tasks
-1. Add route-level/integration tests against a real PostgreSQL test database for concurrent challenge consumption and wallet/payment sensitive-operation wiring.
-2. Review the inactive legacy `PostgresSecurityRepository` usage and consolidate security persistence implementations if it is not needed.
-3. Continue the Security Core adversarial audit before starting Risk & Abuse.
+**These are historical results. The next Codex session must rerun checks against the current repository before relying on them.**
+
+## Product/build target
+Build the complete OPPA application described in `OPPA_MASTER_BUILD_SPEC.md`:
+
+- phone-first identity/authentication;
+- complete secure messaging;
+- groups/media/realtime/offline sync/notifications;
+- wallet and secure transfers;
+- payment integrations, settlement, refunds/reconciliation;
+- Security Core and recovery;
+- Risk & Abuse;
+- notifications/event delivery;
+- Admin/Control Center;
+- Business/merchant capabilities;
+- authorized WhatsApp-connected capabilities and calls;
+- Flutter mobile application;
+- web/admin/trust surfaces;
+- operations/launch readiness.
+
+Three tokenized themes are required across the application:
+- Fluid Africa
+- OPPA Pulse
+- Everyday OPPA
+
+Browser is V1.5/later unless scope changes. VPN is V2. Mini Apps are post-V1.
+
+## Next execution order
+1. Inspect current Security Core state and git history.
+2. Rerun build/typecheck/tests.
+3. Add/finish route-level integration tests with real PostgreSQL where available.
+4. Complete Security Core adversarial audit.
+5. Complete Risk & Abuse.
+6. Complete Notifications/Event Delivery.
+7. Finish Admin/Control Center.
+8. Finish Business.
+9. Finish authorized WhatsApp/Calls.
+10. Build/integrate Flutter mobile and web/admin surfaces against the real API.
+11. Complete Operations/Launch QA.
+12. Defer Browser/VPN/Mini Apps according to the master spec.
+
+If a dependency requires a different order, record the reason and choose the safest executable path.
+
+## Credit exhaustion protocol — mandatory
+
+If Codex runs out of credits/context/time/environment capacity:
+
+- do not start new work;
+- save all coherent completed changes;
+- run the fastest meaningful checks available;
+- commit coherent work;
+- update this file immediately;
+- explicitly state completed vs partial vs not done work.
+
+Use this exact structure:
+
+```text
+SESSION STOP REASON: credits/time/context/environment
+
+COMPLETED:
+- ...
+
+FILES CHANGED:
+- ...
+
+COMMITS:
+- ...
+
+VERIFIED:
+- test: PASS/FAIL/NOT RUN
+- typecheck: PASS/FAIL/NOT RUN
+- build: PASS/FAIL/NOT RUN
+
+PARTIALLY COMPLETED:
+- ...
+
+NOT DONE:
+- ...
+
+KNOWN FAILURES/RISKS:
+- ...
+
+NEXT EXACT TASK:
+- ...
+
+MANUAL OWNER ACTION:
+- ...
+```
+
+Never claim completion for unverified work. Never leave the next session guessing where to resume.
+
+## Security reminder
+Never expose secrets. Never put provider credentials in Flutter or GitHub. Never invent cryptography or bypass platform/provider controls. Never let the client decide financial settlement or security authorization.
