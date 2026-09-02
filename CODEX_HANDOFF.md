@@ -66,3 +66,13 @@ Do not assume tests, builds, migrations, deployment or integrations passed unles
 - Added unit coverage for allow, review, and block risk thresholds.
 - Verified `npm test --workspace @oppa/api` (25 tests), `npm run api:typecheck`, `npm run build`, and `git diff --check`.
 - Commit: `95d50ca feat: apply payment risk velocity checks`.
+
+
+## Audit/fix update — 2026-09-02
+- PR 3 was retargeted to current main and found dirty/stale; do not merge until GitHub reports a clean merge state.
+- Added sensitive-operation context binding to the device proof flow.
+- Wallet transfer authorization now binds from-user, recipient, amount, currency and reference to the signed authorization context.
+- Added migration 0012 for the persisted challenge context hash.
+- Added adversarial tests for changed transaction amount/context.
+- Added strict request validation for authorization context values.
+- IMPORTANT: after these changes, the full test/typecheck/build suite has NOT been executed in this environment. The prior Codex claims apply only to the earlier commit state. Re-run all checks before merge.
