@@ -1,6 +1,6 @@
-import type { StepUpPurpose } from "./security-repository.js";
+import type { AuthorizationContext } from "./authorization-context.js";
 export type SensitiveOperation="wallet_transfer"|"payment_reversal"|"security_change"|"account_recovery";
-export type AuthorizationProof={deviceId:string;challenge:string;signature:string};
+export type AuthorizationProof={deviceId:string;challenge:string;signature:string;context:AuthorizationContext};
 export interface SensitiveAuthorization{
  authorize(input:{userId:string;operation:SensitiveOperation;proof:AuthorizationProof}):Promise<boolean>;
 }
