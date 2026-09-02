@@ -1,14 +1,13 @@
 import { Router } from "express";
 import type { WalletRepository } from "./wallet-repository.js";
 import type { WalletTransferRepository } from "./wallet-transfer-repository.js";
+import type { SensitiveAuthorization, AuthorizationProof } from "../security/sensitive-authorization.js";
 
-export function createWalletRouter(wallets: WalletRepository, transfers?: WalletTransferRepository) {
+export function createWalletRouter(wallets: WalletRepository, transfers?: WalletTransferRepository, authorization?: SensitiveAuthorization) {
   const router = Router();
 
   router.get("/", async (req, res, next) => {
-    try {
-      res.json(await wallets.getOrCreate(req.auth!.userId));
-    } catch (e) { next(e); }
+    try { res.json(await wallets.getOrCreate(req.auth!.userId)); } catch (e) { next(e); }
   });
 
   router.get("/transactions", async (req, res, next) => {
@@ -31,12 +30,15 @@ export function createWalletRouter(wallets: WalletRepository, transfers?: Wallet
       if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) throw new Error("WALLET_AMOUNT_INVALID");
       if (!/^[A-Za-z0-9._:-]{1,160}$/.test(reference)) throw new Error("WALLET_REFERENCE_INVALID");
 
-      const result = await transfers.transfer({
-        fromUserId: req.auth!.userId,
-        toUserId,
-        amountMinor,
-        reference
-      });
+      const proof: AuthorizationProof = {
+        deviceId: typeof req.body?.deviceId === "string" ? req.body.deviceId : "",
+        challenge: typeof req.body?.challenge === "string" ? req.body.challenge : "",
+        signature: typeof req.body?.signature === "string" ? req.body.signature : ""
+      };
+      if (!authorization) throw new Error("SENSITIVE_AUTH_UNAVAILABLE");
+      await authorization.authorize({ userId: req.auth!.userId, operation: "wallet_transfer", proof });
+
+      const result = await transfers.transfer({ fromUserId: req.auth!.userId, toUserId, amountMinor, reference });
       res.status(201).json(result);
     } catch (e) { next(e); }
   });
