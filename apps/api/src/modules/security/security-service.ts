@@ -4,7 +4,9 @@ const TTL_MS=5*60*1000; const MAX_ATTEMPTS=5;
 const hash=(v:string)=>createHash("sha256").update(v).digest("hex");
 export class SecurityService{
  constructor(private readonly security:SecurityRepository){}
- async createStepUp(userId:string,purpose:StepUpPurpose,deviceId?:string){
+ async createStepUp(userId:string,purpose:StepUpPurpose,deviceId:string){
+  if(!deviceId||deviceId.length>128)throw Error("DEVICE_ID_INVALID");
+  if(!await this.security.isActiveDevice(userId,deviceId))throw Error("DEVICE_NOT_ACTIVE");
   const raw=randomBytes(32).toString("base64url"); const expiresAt=new Date(Date.now()+TTL_MS);
   await this.security.createChallenge({userId,deviceId,purpose,challengeHash:hash(raw),expiresAt,maxAttempts:MAX_ATTEMPTS});
   await this.security.recordEvent({userId,deviceId,eventType:"security.step_up_created",severity:"info",metadata:{purpose}});
