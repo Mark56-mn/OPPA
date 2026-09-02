@@ -1,4 +1,4 @@
-import { createVerify } from "node:crypto";
+import { createHash, createVerify, timingSafeEqual } from "node:crypto";
 import type { SecurityRepository, StepUpPurpose } from "./security-repository.js";
 
 export type DeviceProof = {
@@ -17,15 +17,34 @@ export class DeviceProofService {
   if(!input.deviceId||!input.challenge||!input.signature||input.signature.length>8192)throw Error("DEVICE_PROOF_INVALID");
   const challenge=await this.security.findActiveChallenge(userId,purpose);
   if(!challenge||challenge.deviceId!==input.deviceId)throw Error("DEVICE_PROOF_INVALID");
+  const suppliedHash=createHash("sha256").update(input.challenge).digest("hex");
+  const expectedHash=Buffer.from(challenge.challengeHash,"utf8");
+  const receivedHash=Buffer.from(suppliedHash,"utf8");
+  if(expectedHash.length!==receivedHash.length||!timingSafeEqual(expectedHash,receivedHash)){
+   await this.recordFailure(userId,input.deviceId,challenge.id,purpose,"challenge_invalid");
+   throw Error("DEVICE_PROOF_INVALID");
+  }
   const publicKey=await this.security.getActiveDevicePublicKey(userId,input.deviceId);
-  if(!publicKey)throw Error("DEVICE_PROOF_INVALID");
+  if(!publicKey){
+   await this.recordFailure(userId,input.deviceId,challenge.id,purpose,"device_key_unavailable");
+   throw Error("DEVICE_PROOF_INVALID");
+  }
   let valid=false;
   try{
    const verifier=createVerify("SHA256");
    verifier.update(input.challenge,"utf8"); verifier.end();
    valid=verifier.verify(publicKey,Buffer.from(input.signature,"base64url"));
   }catch{valid=false}
-  if(!valid)throw Error("DEVICE_PROOF_INVALID");
-  return this.security.consumeStepUp(userId,input.challenge,purpose);
+  if(!valid){
+   await this.recordFailure(userId,input.deviceId,challenge.id,purpose,"signature_invalid");
+   throw Error("DEVICE_PROOF_INVALID");
+  }
+  if(!await this.security.consumeChallenge(challenge.id,new Date()))throw Error("DEVICE_PROOF_INVALID");
+  await this.security.recordEvent({userId,deviceId:input.deviceId,eventType:"security.device_proof_verified",severity:"info",metadata:{purpose}});
+  return true;
+ }
+ private async recordFailure(userId:string,deviceId:string,challengeId:string,purpose:StepUpPurpose,reason:string){
+  await this.security.incrementChallengeAttempt(challengeId);
+  await this.security.recordEvent({userId,deviceId,eventType:"security.device_proof_failed",severity:"warning",metadata:{purpose,reason}});
  }
 }
