@@ -16,7 +16,7 @@ export function issueAccessToken(userId: string, sessionId: string, secret: stri
 }
 
 export function verifyAccessToken(token: string, secret: string, now = Date.now()): { userId: string; sessionId: string; expiresAt: Date } {
-  if (!token.startsWith(PREFIX)) throw new Error("ACCESS_TOKEN_INVALID");
+  if (!token || token.length > 4096 || !token.startsWith(PREFIX)) throw new Error("ACCESS_TOKEN_INVALID");
   const value = token.slice(PREFIX.length);
   const [payload, signature] = value.split(".");
   if (!payload || !signature) throw new Error("ACCESS_TOKEN_INVALID");
@@ -34,7 +34,7 @@ export function verifyAccessToken(token: string, secret: string, now = Date.now(
     throw new Error("ACCESS_TOKEN_INVALID");
   }
 
-  if (typeof claims.sub !== "string" || typeof claims.sid !== "string" ||
+  if (typeof claims.sub !== "string" || claims.sub.length === 0 || claims.sub.length > 128 || typeof claims.sid !== "string" || claims.sid.length === 0 || claims.sid.length > 128 ||
       typeof claims.exp !== "number" || !Number.isInteger(claims.exp) ||
       claims.exp <= Math.floor(now / 1000)) {
     throw new Error("ACCESS_TOKEN_INVALID");
