@@ -36,7 +36,10 @@ export function createWalletRouter(wallets: WalletRepository, transfers?: Wallet
         signature: typeof req.body?.signature === "string" ? req.body.signature : ""
       };
       if (!authorization) throw new Error("SENSITIVE_AUTH_UNAVAILABLE");
-      await authorization.authorize({ userId: req.auth!.userId, operation: "wallet_transfer", proof });
+      // The intent is derived from the server-validated inputs so a captured
+      // proof can never authorize different recipient/amount/reference values.
+      const intent = { toUserId, amountMinor, currency: "NGN" as const, reference };
+      await authorization.authorize({ userId: req.auth!.userId, operation: "wallet_transfer", proof, intent });
 
       const result = await transfers.transfer({ fromUserId: req.auth!.userId, toUserId, amountMinor, reference });
       res.status(201).json(result);

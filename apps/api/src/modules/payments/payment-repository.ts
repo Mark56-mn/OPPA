@@ -2,6 +2,7 @@ export type PaymentRecord={id:string;userId:string;provider:"paystack"|"flutterw
 export interface PaymentRepository{
  create(input:any):Promise<PaymentRecord>;
  find(userId:string,reference:string):Promise<PaymentRecord|null>;
+ findById(userId:string,paymentId:string):Promise<PaymentRecord|null>;
  findByProviderReference(provider:"paystack"|"flutterwave",reference:string):Promise<PaymentRecord|null>;
  list(userId:string,limit:number,offset:number):Promise<PaymentRecord[]>;
  setRisk(id:string,score:number,decision:"allow"|"review"|"block",reasons:string[]):Promise<PaymentRecord>;
