@@ -30,6 +30,7 @@ export class PostgresSessionRepository implements SessionRepository {
       `select id, user_id as "userId", device_id as "deviceId", expires_at as "expiresAt"
        from public.oppa_sessions
        where refresh_token_hash = $1 and revoked_at is null and expires_at > $2
+       and exists (select 1 from public.oppa_devices d where d.id = oppa_sessions.device_id and d.user_id = oppa_sessions.user_id and d.status = 'active')
        limit 1`,
       [refreshTokenHash, now]
     );
@@ -49,6 +50,7 @@ export class PostgresSessionRepository implements SessionRepository {
         `select id, user_id as "userId", device_id as "deviceId", expires_at as "expiresAt"
          from public.oppa_sessions
          where id = $1 and revoked_at is null and expires_at > $2
+         and exists (select 1 from public.oppa_devices d where d.id = oppa_sessions.device_id and d.user_id = oppa_sessions.user_id and d.status = 'active')
          for update`,
         [input.sessionId, input.now]
       );
@@ -92,6 +94,7 @@ export class PostgresSessionRepository implements SessionRepository {
     const result = await requireDb().query(
       `select 1 from public.oppa_sessions
        where id = $1 and user_id = $2 and revoked_at is null and expires_at > $3
+       and exists (select 1 from public.oppa_devices d where d.id = oppa_sessions.device_id and d.user_id = oppa_sessions.user_id and d.status = 'active')
        limit 1`,
       [sessionId, userId, now]
     );
