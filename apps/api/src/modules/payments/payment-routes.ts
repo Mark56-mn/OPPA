@@ -10,6 +10,14 @@ export function createPaymentRouter(service:PaymentService){
    const result=await service.initialize({userId:req.auth!.userId,provider,amountMinor,email,callbackUrl});
    res.status(201).json(result);
  }catch(e){next(e)}});
+ router.post("/reverse",async(req,res,next)=>{try{
+   const paymentId=typeof req.body?.paymentId==="string"?req.body.paymentId:"";
+   const reason=typeof req.body?.reason==="string"?req.body.reason:"";
+   if(!paymentId) throw Error("PAYMENT_NOT_FOUND");
+   if(!reason) throw Error("PAYMENT_REVERSAL_REASON_INVALID");
+   const proof={deviceId:typeof req.body?.deviceId==="string"?req.body.deviceId:"",challenge:typeof req.body?.challenge==="string"?req.body.challenge:"",signature:typeof req.body?.signature==="string"?req.body.signature:""};
+   res.status(200).json(await service.reverse(req.auth!.userId,paymentId,proof,reason));
+ }catch(e){next(e)}});
  router.get("/history",async(req,res,next)=>{try{
    if(!db) throw Error("DATABASE_URL is not configured");
    const rawLimit=Number(req.query.limit??20); const rawOffset=Number(req.query.offset??0);

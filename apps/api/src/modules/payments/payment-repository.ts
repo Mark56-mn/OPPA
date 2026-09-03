@@ -3,6 +3,7 @@ export type RecentPaymentStats={paidCount:number;failedCount:number};
 export interface PaymentRepository{
  create(input:any):Promise<PaymentRecord>;
  find(userId:string,reference:string):Promise<PaymentRecord|null>;
+ findById(userId:string,paymentId:string):Promise<PaymentRecord|null>;
  findByProviderReference(provider:"paystack"|"flutterwave",reference:string):Promise<PaymentRecord|null>;
  list(userId:string,limit:number,offset:number):Promise<PaymentRecord[]>;
  recentPaymentStats(userId:string,since:Date):Promise<RecentPaymentStats>;
