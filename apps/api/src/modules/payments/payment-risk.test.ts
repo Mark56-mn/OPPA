@@ -2,12 +2,31 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { evaluatePaymentRisk } from "./payment-risk.js";
 
-test("allows ordinary payment activity", () => {
-  assert.deepEqual(evaluatePaymentRisk({ amountMinor: 100_000, recentPaidCount: 0, recentFailedCount: 0 }), { score: 0, decision: "allow", reasons: [] });
+test("allows a small payment with clean history", () => {
+  const r = evaluatePaymentRisk({ amountMinor: 5000, recentPaidCount: 0, recentFailedCount: 0 });
+  assert.equal(r.decision, "allow");
+  assert.deepEqual(r.reasons, []);
 });
-test("routes elevated payment activity to review", () => {
-  assert.deepEqual(evaluatePaymentRisk({ amountMinor: 20_000_000, recentPaidCount: 5, recentFailedCount: 3 }), { score: 65, decision: "review", reasons: ["ELEVATED_AMOUNT", "HIGH_PAYMENT_FREQUENCY", "RECENT_PAYMENT_FAILURES"] });
+
+test("scores large payments without blocking on amount alone", () => {
+  assert.equal(evaluatePaymentRisk({ amountMinor: 20000000, recentPaidCount: 0, recentFailedCount: 0 }).score, 15);
+  assert.equal(evaluatePaymentRisk({ amountMinor: 50000000, recentPaidCount: 0, recentFailedCount: 0 }).score, 35);
 });
-test("blocks a large payment with recent failures", () => {
-  assert.deepEqual(evaluatePaymentRisk({ amountMinor: 50_000_000, recentPaidCount: 5, recentFailedCount: 3 }), { score: 85, decision: "block", reasons: ["LARGE_AMOUNT", "HIGH_PAYMENT_FREQUENCY", "RECENT_PAYMENT_FAILURES"] });
+
+test("escalates on high payment frequency and recent failures", () => {
+  const r = evaluatePaymentRisk({ amountMinor: 5000, recentPaidCount: 5, recentFailedCount: 3 });
+  assert.equal(r.decision, "review");
+  assert.ok(r.reasons.includes("HIGH_PAYMENT_FREQUENCY"));
+  assert.ok(r.reasons.includes("RECENT_PAYMENT_FAILURES"));
+});
+
+test("a large payment combined with abuse signals blocks", () => {
+  const r = evaluatePaymentRisk({ amountMinor: 50000000, recentPaidCount: 5, recentFailedCount: 3 });
+  assert.equal(r.decision, "block");
+});
+
+test("frequent payments alone add to the score without blocking", () => {
+  const r = evaluatePaymentRisk({ amountMinor: 5000, recentPaidCount: 5, recentFailedCount: 0 });
+  assert.equal(r.decision, "allow");
+  assert.deepEqual(r.reasons, ["HIGH_PAYMENT_FREQUENCY"]);
 });

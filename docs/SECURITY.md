@@ -31,9 +31,15 @@ Refresh tokens must be stored only as hashes. Session revocation is server-side.
 - Every rejected proof increments the attempt counter and writes a `security.device_proof_failed` / `security.step_up_failed` event with the reason.
 - Sensitive endpoints fail closed (503) when the sensitive-authorization dependency is unavailable.
 
-## Database
+## Money movement safety
 
-Row-level security is enabled on security-sensitive tables. Application migrations must be reviewed before production execution.
+- Wallet transfers are idempotent, atomic (deterministic wallet locking) and never trust client-side balances.
+- Per-user transfer limits (single, daily total, daily count) are enforced inside the same transaction that moves money; the daily counters are incremented atomically with the transfer and can never race the debit.
+- Operator-issued risk decisions (`user`/`transfer` scopes) are checked before any transfer; a `block` decision fails the transfer closed.
+- Payment settlement credits the wallet only after provider webhook signature verification, provider-side verification, and a risk decision computed from real recent payment counts (no hardcoded assumptions). Operator `payment` blocks/reviews stop settlement before credit.
+- Every blocked transfer and blocked/reviewed payment writes a risk event (`transfer_velocity` / `payment_anomaly`) with the reason.
+- OTP rate limiting and attempt exhaustion write `otp_abuse` risk events.
+- Risk events and operator decisions are append-only records; decisions expire when configured.
 
 ## Database
 

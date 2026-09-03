@@ -3,6 +3,7 @@ import { generateOtp, hashOtp } from "./otp-crypto.js";
 import { otpPolicy } from "./otp-policy.js";
 import type { OtpRepository } from "./otp-repository.js";
 import type { SmsProvider } from "../sms/types.js";
+import type { RiskService } from "../risk/risk-service.js";
 
 export class OtpService {
   constructor(
@@ -10,7 +11,8 @@ export class OtpService {
     private readonly sms: SmsProvider,
     private readonly pepper: string,
     private readonly senderId: string,
-    private readonly callbackUrl?: string
+    private readonly callbackUrl?: string,
+    private readonly risk?: RiskService
   ) {}
 
   async request(phone: string, now = new Date()): Promise<{ challengeId: string }> {
@@ -19,6 +21,7 @@ export class OtpService {
 
     const latest = await this.repository.getLatestCreatedAt(phone);
     if (latest && (now.getTime() - latest.getTime()) / 1000 < otpPolicy.requestCooldownSeconds) {
+      await this.recordOtpAbuse(phone, "request_cooldown");
       throw new Error("OTP_RATE_LIMITED");
     }
 
@@ -26,7 +29,10 @@ export class OtpService {
       phone,
       new Date(now.getTime() - 60 * 60 * 1000)
     );
-    if (hourlyCount >= otpPolicy.maxRequestsPerHour) throw new Error("OTP_RATE_LIMITED");
+    if (hourlyCount >= otpPolicy.maxRequestsPerHour) {
+      await this.recordOtpAbuse(phone, "hourly_limit_exceeded");
+      throw new Error("OTP_RATE_LIMITED");
+    }
 
     const otp = generateOtp();
     const challenge = {
@@ -67,11 +73,13 @@ export class OtpService {
       throw new Error("OTP_INVALID_OR_EXPIRED");
     }
     if (challenge.attempts >= otpPolicy.maxVerificationAttempts) {
+      await this.recordOtpAbuse(phone, "attempts_exceeded");
       throw new Error("OTP_ATTEMPTS_EXCEEDED");
     }
 
     const attempts = await this.repository.incrementAttempts(challenge.id);
     if (attempts > otpPolicy.maxVerificationAttempts) {
+      await this.recordOtpAbuse(phone, "attempts_exceeded");
       throw new Error("OTP_ATTEMPTS_EXCEEDED");
     }
 
@@ -80,5 +88,18 @@ export class OtpService {
     }
 
     await this.repository.consume(challenge.id, now);
+  }
+
+  private async recordOtpAbuse(phone: string, signal: string) {
+    try {
+      await this.risk?.recordEvent({
+        category: "otp_abuse",
+        signal,
+        score: 40,
+        decision: "review",
+        reasons: [signal],
+        metadata: { phone }
+      });
+    } catch {}
   }
 }

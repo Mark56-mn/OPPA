@@ -41,3 +41,23 @@ test("OTP is never returned by request", async () => {
   assert.equal("otp" in result, false);
   assert.match(sms.sent[0].message, /OPPA verification code is \d{6}/);
 });
+
+test("records an OTP abuse event when rate limited", async () => {
+  const repo = new MemoryOtpRepository();
+  const sms = new CapturingSms();
+  const events: any[] = [];
+  const risk = { recordEvent: async (input: any) => { events.push(input); } };
+  const service = new OtpService(repo, sms, "pepper", "OPPA", undefined, risk as any);
+  const first = await service.request("+2348012345678", new Date("2026-01-01T00:00:00Z"));
+  // A consumed challenge (verified or SMS-failure path) leaves the cooldown
+  // branch reachable; an unconsumed one short-circuits to OTP_ALREADY_ACTIVE.
+  await repo.consume(first.challengeId, new Date("2026-01-01T00:00:30Z"));
+  await assert.rejects(
+    service.request("+2348012345678", new Date("2026-01-01T00:00:30Z")),
+    { message: "OTP_RATE_LIMITED" }
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0].category, "otp_abuse");
+  assert.equal(events[0].signal, "request_cooldown");
+  assert.deepEqual(events[0].metadata, { phone: "+2348012345678" });
+});

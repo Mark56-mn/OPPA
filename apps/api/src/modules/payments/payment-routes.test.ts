@@ -22,7 +22,7 @@ function repo(calls: Array<Record<string, unknown>>, existing: PaymentRecord | n
     async findById(userId: string, paymentId: string) { calls.push({ findById: { userId, paymentId } }); return existing && existing.userId === userId && existing.id === paymentId ? existing : null; },
     async findByProviderReference() { return existing; },
     async list() { return []; },
-    async recentPaymentStats() { return { paidCount: 0, failedCount: 0 }; },
+    async countRecent() { return { paid: 0, failed: 0 }; },
     async setRisk() { return paymentRecord(); },
     async markPaidAndCredit(input: any) { calls.push({ markPaidAndCredit: input }); return paymentRecord(); },
     async markFailed() {},

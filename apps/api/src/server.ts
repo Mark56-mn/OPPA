@@ -37,6 +37,9 @@ import { PostgresSecurityProofRepository } from "./modules/security/postgres-sec
 import { DeviceProofService } from "./modules/security/device-proof-service.js";
 import { DefaultSensitiveAuthorization } from "./modules/security/default-sensitive-authorization.js";
 import { createSecurityRouter } from "./modules/security/security-routes.js";
+import { createAdminRouter } from "./modules/admin/admin-routes.js";
+import { PostgresRiskRepository } from "./modules/risk/postgres-risk-repository.js";
+import { RiskService } from "./modules/risk/risk-service.js";
 
 const app = express();
 const port = env.port;
@@ -60,7 +63,9 @@ if (env.nodeEnv === "production" && authConfig.some(v => !v)) throw new Error("A
 if (authConfig.every(Boolean)) {
   const sessionRepository = new PostgresSessionRepository();
   const devices = new DeviceService(new PostgresDeviceRepository());
-  const otp = new OtpService(new PostgresOtpRepository(), new BulkSmsProvider(), requiredEnv("OPPA_OTP_PEPPER"), env.bulkSmsSenderId, env.bulkSmsCallbackUrl);
+  const riskRepository = new PostgresRiskRepository();
+  const risk = new RiskService(riskRepository);
+  const otp = new OtpService(new PostgresOtpRepository(), new BulkSmsProvider(), requiredEnv("OPPA_OTP_PEPPER"), env.bulkSmsSenderId, env.bulkSmsCallbackUrl, risk);
   const sessions = new SessionService(sessionRepository, requiredEnv("OPPA_REFRESH_TOKEN_PEPPER"), requiredEnv("OPPA_ACCESS_TOKEN_SECRET"));
   const auth = new AuthService(otp, new PostgresIdentityRepository(), sessions, devices);
 
@@ -74,16 +79,17 @@ if (authConfig.every(Boolean)) {
   const sensitiveAuthorization = new DefaultSensitiveAuthorization(deviceProofs);
 
   protectedRouter.use("/security", createSecurityRouter(security));
+  protectedRouter.use("/admin", createAdminRouter(riskRepository));
   protectedRouter.use("/profile", createProfileRouter(new PostgresProfileRepository()));
   protectedRouter.use("/contacts", createContactRouter(new PostgresContactRepository()));
   protectedRouter.use("/conversations", createConversationRouter(new PostgresConversationRepository()));
   protectedRouter.use("/", createMessagingRouter(new PostgresMessageRepository()));
-  protectedRouter.use("/wallet", createWalletRouter(new PostgresWalletRepository(), new PostgresWalletTransferRepository(), sensitiveAuthorization));
+  protectedRouter.use("/wallet", createWalletRouter(new PostgresWalletRepository(), new PostgresWalletTransferRepository(riskRepository), sensitiveAuthorization));
 
   const providers:any = {};
   if (env.paystackSecret) providers.paystack = new PaystackProvider(env.paystackSecret);
   if (env.flutterwaveSecret && env.flutterwaveWebhookSecret) providers.flutterwave = new FlutterwaveProvider(env.flutterwaveSecret, env.flutterwaveWebhookSecret);
-  const payments = new PaymentService(new PostgresPaymentRepository(), providers, sensitiveAuthorization);
+  const payments = new PaymentService(new PostgresPaymentRepository(), providers, sensitiveAuthorization, risk);
   protectedRouter.use("/payments", createPaymentRouter(payments));
   app.use("/v1/payments/webhooks", createPaymentWebhookRouter(payments));
   app.use("/v1", protectedRouter);

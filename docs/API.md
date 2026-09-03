@@ -91,3 +91,41 @@ Response:
 - 409 when the payment is not settled or already reversed
 
 Provider-initiated refund webhooks remain explicitly unimplemented (`501`) until provider refund APIs are integrated.
+
+## Wallet transfer limits
+
+Wallet transfers are limited per user by default (single transfer, daily total, daily count) and enforced atomically with the transfer. Exceeding a limit returns `409 WALLET_TRANSFER_LIMIT_EXCEEDED`. An operator `block` decision on the `user` or `transfer` scope returns `409 WALLET_TRANSFER_BLOCKED`.
+
+## Risk & Abuse (admin / fraud analyst)
+
+All endpoints require staff authentication plus the `fraud.review` permission (seeded for the `fraud_analyst` role).
+
+### GET /admin/risk/decisions?userId=&limit=
+
+Lists operator risk decisions for a user, newest first.
+
+### GET /admin/risk/events?userId=&limit=
+
+Lists recorded risk events (OTP abuse, transfer velocity, payment anomalies) for a user.
+
+### POST /admin/risk/decisions
+
+Issues an operator decision that money-movement paths enforce server-side.
+
+Request:
+```json
+{
+  "userId": "<user-id>",
+  "scope": "payment",
+  "decision": "block",
+  "reason": "chargeback pattern",
+  "expiresAt": "2026-10-01T00:00:00Z"
+}
+```
+
+Response:
+- 201 when created
+- 400 for invalid scope/decision/reason/expiry
+- 403 without the `fraud.review` permission
+
+A `block` on the `payment` scope stops payment settlement; `user`/`transfer` blocks stop wallet transfers. A `review` decision stops settlement but leaves transfers allowed.
