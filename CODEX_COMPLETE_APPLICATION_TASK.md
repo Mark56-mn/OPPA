@@ -1,287 +1,223 @@
-# OPPA AUTONOMOUS COMPLETION TASK — 2026-09-03
+# OPPA AUTONOMOUS V1 COMPLETION TASK
 
 ## Mission
 
-Complete the OPPA application from the CURRENT repository state to the V1 definition in `OPPA_MASTER_BUILD_SPEC.md`.
+Complete OPPA V1 from the **current repository state**. Work autonomously for long sessions. Do not wait for owner confirmation between normal tasks. Finish one module, audit it, verify it, then immediately continue.
 
-You have authorization to work autonomously for long sessions. Do NOT wait for the owner after each normal task. Work module-by-module, but finish each module before moving onward.
+The owner will merge manually. Do not spend credits on CI/billing/infrastructure/deployment unless a change is required for application correctness. Do not fake unavailable integrations.
 
-The owner will perform final merges manually. Do NOT spend time on billing, CI/infrastructure setup, cloud deployment, or production credentials unless required to make application code structurally correct. Your job is implementation, code quality, security, tests, and durable handoff.
+## Mandatory reading
 
-## Read first — mandatory
-
-1. `README.md`
-2. `OPPA_MASTER_BUILD_SPEC.md`
-3. `CODEX_AUTOPILOT.md`
-4. `CODEX_HANDOFF.md`
+1. `OPPA_MASTER_BUILD_SPEC.md`
+2. `CODEX_AUTOPILOT.md`
+3. `CODEX_HANDOFF.md`
+4. `CODEX_BUILD_MAP.md`
 5. Current git status/tree/history
-6. Actual source/tests/migrations for the active module
+6. Relevant implementation, migrations and tests
 
-The repository is the source of truth. Do not assume a file means a feature is complete.
+The repository is the source of truth. Existing files are not proof of completion.
 
-## Current known state
+## LOCKED V1 PRODUCT SCOPE
 
-The backend already has substantial foundations for:
+V1 is OPPA's own platform: identity, security, messaging, wallet, payments, risk, notifications, business, OPPA-native calls, Flutter application and required web/admin/trust/operations surfaces.
 
-- Auth/OTP/Identity
-- Device/Session
-- Profile/Contacts
-- Messaging
-- Wallet/Transfers/Ledger
-- Payments/Paystack/Flutterwave foundations
-- Security Core
-- Risk & Abuse
-- Admin/RBAC
+### WhatsApp is NOT V1
 
-Recent Security Core and Risk/Wallet work has been documented as tested in previous sessions. Independently inspect the CURRENT main branch before relying on those claims.
+Do not implement or expose any WhatsApp capability in V1. Specifically do not add:
+- WhatsApp API/Cloud API integration;
+- WhatsApp OAuth/account linking;
+- WhatsApp Business onboarding;
+- WhatsApp inbox or message synchronization;
+- WhatsApp-specific routes/database models/UI;
+- WhatsApp Web automation/scraping;
+- personal WhatsApp message/contact import;
+- WhatsApp calls.
 
-### Important known limitations
+Remove or isolate stale WhatsApp V1 references so they cannot become runtime dependencies. Do not create a fake placeholder that suggests WhatsApp is connected.
 
-- Postgres integration tests may require `DATABASE_URL`.
-- Payment provider refund APIs are not complete; never advertise real refunds until provider refund APIs/webhooks are genuinely implemented.
-- Risk signals such as registration/login/device/merchant/spam anomaly signals may still need wiring.
-- Admin Control Center currently has a risk-management seed and needs completion.
-- Notifications/Event Delivery is incomplete.
-- Business is incomplete.
-- Authorized WhatsApp/Calls are incomplete.
-- Flutter mobile UI is incomplete.
-- Web/admin/trust surfaces are incomplete.
-- Operations/launch QA is incomplete.
-- Browser is V1.5/later, VPN V2, Mini Apps post-V1 unless the master spec is changed.
+WhatsApp is a **V2 optional OPPA Business external-channel strategy**. It may later allow eligible businesses to use OPPA as their operating layer while optionally communicating through officially authorized WhatsApp Business capabilities. V2 begins only after fresh verification of Meta documentation, eligibility, permissions, policies, pricing and App Review requirements.
 
-## EXECUTION ORDER
+OPPA must never present itself as WhatsApp or as affiliated with WhatsApp.
 
-Follow this order unless a dependency makes another order objectively safer:
+## V1 EXECUTION ORDER
 
+```text
 1. Auth + Identity closure
 2. Device + Session closure
 3. Messaging completion
-4. Wallet completion
-5. Payments completion
-6. Security Core final adversarial audit
-7. Risk & Abuse completion
-8. Notifications/Event Delivery
-9. Admin/Control Center
-10. Business/Merchant
-11. Authorized WhatsApp + Calls
-12. Flutter mobile application integration
+4. Wallet closure
+5. Payments closure
+6. Security Core adversarial audit
+7. Risk + Abuse completion/wiring
+8. Notifications + Event Delivery
+9. Admin / Control Center
+10. Business / Merchant
+11. OPPA-native Calls
+12. Flutter mobile integration
 13. Web/Admin/Trust surfaces
-14. Operations/Launch QA
-15. Browser V1.5 only if explicitly brought into scope
-16. VPN V2 only
-17. Mini Apps post-V1
+14. Operations + Launch QA
+```
 
-Do not move to the next module until the active module passes its own completion gate.
+Do not skip ahead merely because a later module is easier. Change order only when a real dependency requires it, and document why.
 
-## MODULE COMPLETION GATE
+## BUSINESS SAFETY BLOCKER
 
-For EVERY module:
+Before declaring Business complete, fix the identified merchant self-ordering issue:
 
-### A. Inspect
-- Read all relevant implementation files.
-- Read repository interfaces and DB repositories.
-- Read migrations.
-- Read routes/controllers.
-- Read tests.
-- Trace the request/data flow end-to-end.
+- merchant owner/staff must not create an ordinary customer order against their own business;
+- enforce server-side;
+- ensure no ordinary customer settlement/reward/fee path can be manufactured through self-ordering;
+- add regression tests;
+- do not rely on UI prevention.
 
-### B. Implement
-- Reuse existing abstractions.
-- Avoid duplicate services.
-- Keep providers behind adapters.
-- Keep business/security decisions server-side.
-- Keep financial state in integer minor units.
-- Use transactions and deterministic locking for money.
-- Use established cryptographic libraries/protocols.
-- Never invent cryptography.
-- Never create fake provider success paths.
+## MODULE WORKFLOW
 
-### C. Security audit
-Check:
-- authentication
-- authorization/ownership
-- input validation
-- output/error leakage
-- replay
-- idempotency
-- concurrency/races
-- enumeration
-- brute force
-- rate limiting
-- secret exposure
-- SSRF/file/path injection where applicable
-- privilege escalation
-- insecure direct object references
-- auditability
-- fail-closed behavior
+For every module:
 
-### D. Verification
-Run what is available:
-- targeted tests
-- full tests
-- typecheck
-- build
-- lint/static checks
-- migration/schema checks
-- adversarial tests
+### 1. Inspect
+- source files;
+- interfaces/services/repositories;
+- migrations/schema;
+- routes/controllers;
+- tests;
+- server registration;
+- configuration;
+- end-to-end data flow.
 
-If a test cannot run because an external dependency is unavailable, record exactly why. Do not pretend it passed.
+### 2. Implement
+- reuse existing abstractions;
+- avoid duplicate services;
+- keep provider integrations behind adapters;
+- keep business/security decisions server-side;
+- use integer minor units for money;
+- use transactions and deterministic locks for money;
+- use established cryptographic protocols only;
+- never create fake success paths.
 
-### E. Review
-Inspect the final diff and search for:
-- TODO placeholders
-- 501/unimplemented paths
-- fake data
-- hard-coded secrets
-- hard-coded authorization decisions
-- dead routes
-- inconsistent status/error codes
-- missing migrations
-- missing route registration
-- client-controlled financial settlement
-- security bypasses
+### 3. Security review
+Check authentication, authorization/ownership, validation, enumeration, replay, idempotency, concurrency/races, brute force, rate limits, privilege escalation, insecure direct object references, secret leakage, SSRF/path/file risks where applicable, auditability and fail-closed behavior.
 
-### F. Mark complete
-Only mark a module complete when implementation + wiring + persistence + authorization + failure handling + tests + build compatibility are addressed.
+### 4. Verification
+Run available targeted tests, full tests, typecheck, build, lint/static checks and schema/migration checks. Run adversarial/replay/concurrency tests where relevant.
 
-## SPEED PROTOCOL
+If Postgres integration tests require `DATABASE_URL` and it is unavailable, do not pretend they passed. Record the exact limitation and continue with work that can be safely verified.
 
-You are expected to work quickly and continuously.
+### 5. Diff audit
+Search the final changes for TODOs, stubs/501 paths, fake data, hard-coded secrets, hard-coded authorization, dead routes, missing migration wiring, unsafe error leakage, client-controlled financial state and security bypasses.
 
-- Batch independent file reads/searches.
-- Batch independent analysis.
-- Do not repeatedly rediscover repository structure.
-- Do not spend time on cosmetic refactors unrelated to the active module.
-- Fix root causes rather than symptoms.
-- Prefer complete vertical slices over isolated stubs.
-- When one module is verified, immediately start the next.
-- Never sacrifice security or correctness merely to increase speed.
+### 6. Completion
+Only mark the module complete when implementation, persistence, route wiring, authorization, failure handling, relevant idempotency/concurrency, tests and build compatibility are addressed.
 
-## MOBILE PRODUCT TARGET
+## CROSS-CUTTING FINANCIAL RULES
 
-The Flutter application must ultimately implement the complete mobile experience in the master spec:
+Never allow the client to declare payment success, mutate balances, choose ledger state, bypass risk, bypass step-up or alter settled amounts.
 
-Onboarding → phone OTP → profile → theme selection → Home → Chats → Contacts → Wallet → Payments → Business → Connect → Me/Security.
+Money mutation flow:
 
-Use one tokenized design system supporting:
-- Fluid Africa
-- OPPA Pulse
-- Everyday OPPA
-
-Do not duplicate application logic per theme.
-
-Mobile requirements include:
-- offline-first appropriate data
-- durable outbound queue
-- sync/reconciliation
-- loading/empty/error/pending states
-- data-saving behavior
-- accessible controls
-- secure storage for credentials/keys
-- no provider/payment secrets in the client
-
-## FINANCIAL SAFETY
-
-Never allow the client to:
-- declare payment success
-- credit/debit arbitrary balances
-- bypass risk
-- bypass step-up authorization
-- choose ledger state
-- alter settled payment amounts
-
-Money mutations must be:
-- authenticated
-- authorized
-- validated
-- idempotent
-- transactionally safe
-- concurrency-safe
-- auditable
-
-## SECURITY SAFETY
-
-Sensitive operation flow must remain:
-
+```text
 request
 → authentication
 → authorization
 → validation
-→ device/security proof
+→ security proof/step-up where required
 → risk decision
-→ business transaction
-→ audit event
+→ atomic business transaction
+→ audit
 → response
+```
 
-Revoked devices/sessions must not remain usable.
+Never advertise provider refunds until actual provider refund APIs/webhooks are implemented.
 
-## INTEGRATION POLICY
+## CROSS-CUTTING SECURITY RULES
 
-Implement real adapters and real application wiring.
+- revoked devices/sessions must not remain usable;
+- sensitive authorization must be bound to the intended operation;
+- challenges must be one-time and race-safe;
+- secrets never enter source control, Flutter bundles, logs or prompts;
+- never invent cryptography;
+- fail closed when required security dependencies are unavailable.
 
-If an external provider cannot be configured or exercised in this environment:
-- build the correct interface
-- implement safe parsing/validation/error handling
-- add tests with controlled fixtures where appropriate
-- explicitly record what remains externally dependent
-- never pretend the integration is live
+## MOBILE TARGET
 
-## DOCUMENTATION / HANDOFF
+Flutter V1 must be a real application connected to the API, not static mock screens.
 
-Update `CODEX_HANDOFF.md` after every major coherent batch and whenever a session is stopping.
+Required journey:
 
-At minimum record:
+```text
+Onboarding → Phone → OTP → Profile → Theme → Home
+→ Chats → Contacts → Wallet → Payments → Business
+→ Connect → Me/Security
+```
 
-SESSION STOP REASON:
+Use one tokenized design system:
+- Fluid Africa
+- OPPA Pulse
+- Everyday OPPA
+
+Theme changes visual tokens only. Include loading, empty, error, pending and offline/reconnect states where applicable. Keep credentials/device keys in secure storage and never ship provider/payment secrets.
+
+## NOTIFICATIONS
+
+Build a provider-agnostic event/delivery layer with in-app notifications, preferences, durable event/outbox semantics, idempotency, status, retry/backoff and background processing. Never place OTPs, tokens, signatures or unnecessary sensitive financial/security information into notification payloads.
+
+## ADMIN
+
+Complete least-privilege operations surfaces, RBAC, audit and emergency controls. Admins must not casually read private message contents.
+
+## BUSINESS
+
+Complete business onboarding, profiles, staff roles, customers, products, orders, payments, merchant wallet/settlement boundaries, analytics and fraud/support controls. Keep consumer and merchant permissions separate.
+
+## CALLS
+
+Implement OPPA-native voice/video calls separately from any external platform. Use dedicated signaling/media/security architecture. Do not call this WhatsApp functionality.
+
+## V1 OUT OF SCOPE
+
+Browser expansion, VPN, Mini Apps and WhatsApp integration are deferred. Do not let them consume V1 implementation time.
+
+## SPEED PROTOCOL
+
+Batch independent reads/searches/tests. Work in coherent vertical slices. Do not repeatedly rediscover the repository. Fix root causes. Do not sacrifice security for speed.
+
+## CREDIT EXHAUSTION — MANDATORY
+
+If credits/context/time/environment capacity run out:
+1. stop starting new work;
+2. save coherent changes;
+3. run the fastest meaningful verification;
+4. commit coherent work;
+5. update `CODEX_HANDOFF.md` immediately;
+6. record exact completed/partial/not-done work, files, commit SHAs, verification, risks and next task.
+
+Use:
+
+```text
+SESSION STOP REASON: credits/time/context/environment
 COMPLETED:
+- ...
 FILES CHANGED:
+- ...
 COMMITS:
+- ...
 VERIFIED:
+- test: PASS/FAIL/NOT RUN
+- typecheck: PASS/FAIL/NOT RUN
+- build: PASS/FAIL/NOT RUN
 PARTIALLY COMPLETED:
+- ...
 NOT DONE:
+- ...
 KNOWN FAILURES/RISKS:
+- ...
 NEXT EXACT TASK:
+- ...
 MANUAL OWNER ACTION:
-
-If you run out of credits/context/time:
-- stop starting new work
-- save coherent work
-- verify what can be verified
-- update the handoff
-- leave the exact resume point
+- ...
+```
 
 Never claim unverified work is complete.
 
-## FINAL V1 DEFINITION
-
-V1 is complete only when a user can genuinely traverse:
-
-install
-→ onboarding
-→ phone verification
-→ profile
-→ theme
-→ home
-→ contacts
-→ direct/group messaging
-→ offline/reconnect behavior
-→ notifications
-→ wallet
-→ secure transfer
-→ wallet funding/payment
-→ transaction history
-→ included business path
-→ security/devices/recovery
-→ support/reporting
-
-Operations must also have the necessary RBAC, audit and emergency controls.
-
 ## FINAL COMMAND
 
-Do the work, do not merely describe it.
-
-When the owner says "check the repo, there is a new task file", find this file and execute it together with the master spec, autopilot contract and handoff.
-
-The owner wants implementation speed and will manually merge. Do not block on CI/billing/infrastructure work.
-
-Finish the current module, audit it, verify it, then move to the next unfinished module until credits or the V1 definition is exhausted.
+Do the work, not merely the description. When one verified module is finished, move to the next unfinished V1 module without waiting for the owner. When V1 acceptance is genuinely satisfied, stop expanding scope and prepare the repository for release/owner review.
