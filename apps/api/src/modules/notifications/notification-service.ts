@@ -26,6 +26,8 @@ export interface NotificationStore {
   markFailed(eventId: string, error: string, nextAttemptAt: Date): Promise<void>;
   skip(eventId: string): Promise<void>;
   preferences(userId: string): Promise<NotificationPreferences>;
+  /** Requeues events stuck in 'processing' from a crashed worker tick. */
+  recoverStalledProcessing?(stalledMinutes: number): Promise<void>;
 }
 
 /** Exponential backoff with jitter-free determinism: 30s, 60s, 120s, 240s, 480s. */
@@ -48,6 +50,13 @@ export class NotificationService {
    * checks are read fresh per event so changes take effect without restart.
    */
   async processBatch(limit: number): Promise<{ delivered: number; skipped: number; failed: number }> {
+    // Recover events stranded by a previous crashed tick before claiming, so
+    // they rejoin the queue instead of starving forever.
+    try {
+      await this.store.recoverStalledProcessing?.(10);
+    } catch {
+      // Recovery is best-effort; claiming proceeds with whatever is pending.
+    }
     const events = await this.store.claimDueEvents(limit, new Date());
     let delivered = 0, skipped = 0, failed = 0;
     for (const event of events) {

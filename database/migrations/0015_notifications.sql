@@ -45,7 +45,8 @@ create table if not exists public.oppa_notification_outbox (
   next_attempt_at timestamptz not null default now(),
   last_error text,
   delivered_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 create unique index if not exists oppa_notification_outbox_dedupe_uidx

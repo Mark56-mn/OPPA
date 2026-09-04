@@ -87,7 +87,7 @@ export class PostgresNotificationRepository {
       await client.query("begin");
       const r = await client.query(
         `update public.oppa_notification_outbox
-         set status='processing', attempts=attempts+1
+         set status='processing', attempts=attempts+1, updated_at=now()
          where id in (
            select id from public.oppa_notification_outbox
            where status='pending' and next_attempt_at <= $2
@@ -131,7 +131,7 @@ export class PostgresNotificationRepository {
       if (!ins.rows[0]) throw new Error("NOTIFICATION_USER_NOT_FOUND");
       await client.query(
         `update public.oppa_notification_outbox
-         set status='delivered', delivered_at=now(), last_error=null
+         set status='delivered', delivered_at=now(), updated_at=now(), last_error=null
          where id=$1 and status='processing'`,
         [event.id]
       );
@@ -147,8 +147,28 @@ export class PostgresNotificationRepository {
   /** Marks an event skipped (e.g. user preferences disable its category). */
   async skip(eventId: string): Promise<void> {
     await requireDb().query(
-      `update public.oppa_notification_outbox set status='skipped' where id=$1 and status='processing'`,
+      `update public.oppa_notification_outbox set status='skipped', updated_at=now() where id=$1 and status='processing'`,
       [eventId]
+    );
+  }
+
+  /**
+   * Recovers events stranded in 'processing' by a crashed worker between
+   * claim and mark-delivered. Called by the worker on every tick; without it
+   * a crash permanently starves those events (they are neither pending nor
+   * failed). Uses server time (updated_at) so worker clock skew cannot hide
+   * rows. Every claim/resolve touch also refreshes updated_at.
+   */
+  async recoverStalledProcessing(stalledMinutes: number): Promise<void> {
+    if (!Number.isSafeInteger(stalledMinutes) || stalledMinutes < 1 || stalledMinutes > 1440) {
+      throw new Error("NOTIFICATION_PAGINATION_INVALID");
+    }
+    await requireDb().query(
+      `update public.oppa_notification_outbox
+       set status='pending', next_attempt_at=now(), updated_at=now()
+       where status='processing'
+         and updated_at < now() - make_interval(mins => $1::int)`,
+      [stalledMinutes]
     );
   }
 
@@ -156,7 +176,7 @@ export class PostgresNotificationRepository {
     await requireDb().query(
       `update public.oppa_notification_outbox
        set status = case when attempts >= max_attempts then 'failed' else 'pending' end,
-           last_error=$2, next_attempt_at=$3
+           last_error=$2, next_attempt_at=$3, updated_at=now()
        where id=$1`,
       [eventId, error.slice(0, 500), nextAttemptAt]
     );
@@ -183,13 +203,21 @@ export class PostgresNotificationRepository {
     return Number(r.rows[0]?.n ?? 0);
   }
 
+  /**
+   * Marks notifications read for the caller. Bulk mode (notificationId=null)
+   * deliberately excludes the 'security' category: a client may not hide
+   * security alerts en masse without reading them individually — a swipe-all
+   * must not bury an active takeover alert.
+   */
   async markRead(userId: string, notificationId: string | null): Promise<number> {
     if (notificationId !== null && (typeof notificationId !== "string" || notificationId.length > 128)) {
       throw new Error("NOTIFICATION_ID_INVALID");
     }
     const r = await requireDb().query(
       `update public.oppa_notifications set read_at=now()
-       where user_id=$1 and read_at is null and ($2::uuid is null or id=$2::uuid)`,
+       where user_id=$1 and read_at is null
+         and (category <> 'security' or $2::uuid is not null)
+         and ($2::uuid is null or id=$2::uuid)`,
       [userId, notificationId]
     );
     return r.rowCount ?? 0;

@@ -309,13 +309,27 @@ export class PostgresBusinessRepository {
       if (!business.rows[0] || business.rows[0].status !== "active") throw new Error("BUSINESS_ORDER_STATE_INVALID");
       const ownerUserId = String(business.rows[0].ownerUserId);
 
+      // Re-check the self-order rule AT SETTLEMENT TIME: a customer who
+      // became owner/staff after creating the order must not be able to
+      // settle money into their own business wallet.
+      const staffNow = await client.query(
+        `select 1 from public.oppa_business_staff where business_id=$1 and user_id=$2 limit 1`,
+        [o.businessId, customerUserId]
+      );
+      if (staffNow.rows[0]) throw new Error("BUSINESS_ORDER_SELF_INVALID");
+
       await client.query(
         `insert into public.oppa_wallets(user_id,currency) values($1,'NGN'),($2,'NGN') on conflict (user_id) do nothing`,
         [customerUserId, ownerUserId].sort()
       );
+      // Lock both wallets (deterministic order) and require both account
+      // holders to be active, mirroring the wallet-transfer invariant.
       const ordered = [customerUserId, ownerUserId].sort();
       const locked = await client.query(
-        `select user_id from public.oppa_wallets where user_id in ($1,$2) order by user_id for update`,
+        `select w.user_id from public.oppa_wallets w
+         join public.oppa_users u on u.id = w.user_id
+         where w.user_id in ($1,$2) and u.status = 'active'
+         order by w.user_id for update of w`,
         [ordered[0], ordered[1]]
       );
       if (locked.rowCount !== 2) throw new Error("USER_NOT_FOUND");

@@ -54,8 +54,14 @@ export class PostgresWalletTransferRepository implements WalletTransferRepositor
         "insert into public.oppa_wallets (user_id, currency) values ($1,'NGN'),($2,'NGN') on conflict (user_id) do nothing",
         ordered
       );
+      // Lock both wallets (deterministic order) and require both account
+      // holders to be active: money must never move to or from a frozen,
+      // locked, suspended or deleted account.
       const locked = await client.query(
-        "select user_id from public.oppa_wallets where user_id in ($1,$2) order by user_id for update",
+        `select w.user_id from public.oppa_wallets w
+         join public.oppa_users u on u.id = w.user_id
+         where w.user_id in ($1,$2) and u.status = 'active'
+         order by w.user_id for update of w`,
         [ordered[0], ordered[1]]
       );
       if (locked.rowCount !== 2) throw new Error("USER_NOT_FOUND");
@@ -97,7 +103,22 @@ export class PostgresWalletTransferRepository implements WalletTransferRepositor
         "insert into public.oppa_audit_events(actor_user_id,event_type,entity_type,entity_id,metadata) values($1,'wallet.transfer.created','transfer',$2,$3::jsonb)",
         [input.fromUserId, transferId, JSON.stringify({ toUserId: input.toUserId, amountMinor: input.amountMinor, reference: input.reference })]
       );
-      await this.risk?.incrementTransferCounters(input.fromUserId, new Date(), input.amountMinor);
+      // NOTE: counter increment intentionally inside this transaction (above).
+      // Daily counters are incremented inside the SAME transaction that moves
+      // the money (the wallets are locked above, so concurrent same-sender
+      // transfers serialize here and the limit assessment of the next transfer
+      // always observes committed counters).
+      if (this.risk) {
+        await client.query(
+          `insert into public.oppa_wallet_daily_counters(user_id,day,total_minor,count)
+           values($1,$2::date,$3,1)
+           on conflict(user_id,day) do update set
+             total_minor=oppa_wallet_daily_counters.total_minor+excluded.total_minor,
+             count=oppa_wallet_daily_counters.count+1,
+             updated_at=now()`,
+          [input.fromUserId, new Date().toISOString().slice(0, 10), input.amountMinor]
+        );
+      }
       // Notification payloads carry no amounts/references beyond the opaque
       // transfer id — never expose financial detail in notification bodies.
       await client.query(TRANSFER_OUTBOX_SQL, [

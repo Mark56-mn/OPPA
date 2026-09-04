@@ -68,6 +68,9 @@ export class OtpService {
   }
 
   async verify(phone: string, otp: string, now = new Date()): Promise<void> {
+    // Defense-in-depth shape guard: the route layer already enforces this, but
+    // verification must fail fast on malformed input regardless of call path.
+    if (!/^\d{6}$/.test(otp)) throw new Error("OTP_INVALID_OR_EXPIRED");
     const challenge = await this.repository.getActive(phone, now);
     if (!challenge || challenge.expiresAt <= now || challenge.consumedAt) {
       throw new Error("OTP_INVALID_OR_EXPIRED");

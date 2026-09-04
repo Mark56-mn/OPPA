@@ -14,7 +14,7 @@ function store(overrides: Partial<NotificationStore> = {}): NotificationStore {
       return { security: true, device: true, message: true, wallet: true, payment: true, support: true, business: true };
     },
     ...overrides
-  };
+  } as NotificationStore;
 }
 
 function event(overrides: Partial<ClaimedEvent> = {}): ClaimedEvent {
