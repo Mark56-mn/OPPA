@@ -28,8 +28,8 @@ import { createWalletRouter } from "./modules/wallet/wallet-routes.js";
 import { PostgresWalletTransferRepository } from "./modules/wallet/postgres-wallet-transfer-repository.js";
 import { PaystackProvider } from "./modules/payments/paystack-provider.js";
 import { FlutterwaveProvider } from "./modules/payments/flutterwave-provider.js";
-import { PostgresPaymentRepository } from "./modules/payments/postgres-payment-repository.js";
 import { PaymentService } from "./modules/payments/payment-service.js";
+import { PostgresPaymentRepository } from "./modules/payments/postgres-payment-repository.js";
 import { createPaymentRouter } from "./modules/payments/payment-routes.js";
 import { createPaymentWebhookRouter } from "./modules/payments/payment-webhook-routes.js";
 import { SecurityService } from "./modules/security/security-service.js";
@@ -38,8 +38,16 @@ import { DeviceProofService } from "./modules/security/device-proof-service.js";
 import { DefaultSensitiveAuthorization } from "./modules/security/default-sensitive-authorization.js";
 import { createSecurityRouter } from "./modules/security/security-routes.js";
 import { createAdminRouter } from "./modules/admin/admin-routes.js";
+import { createAdminEmergencyRouter } from "./modules/admin/admin-emergency-routes.js";
 import { PostgresRiskRepository } from "./modules/risk/postgres-risk-repository.js";
 import { RiskService } from "./modules/risk/risk-service.js";
+import { createAccountRouter } from "./modules/account/account-routes.js";
+import { PostgresSecurityEventRecorder } from "./modules/auth/postgres-security-event-recorder.js";
+import { PostgresNotificationRepository } from "./modules/notifications/postgres-notification-repository.js";
+import { NotificationService } from "./modules/notifications/notification-service.js";
+import { createNotificationRouter } from "./modules/notifications/notification-routes.js";
+import { createBusinessRouter } from "./modules/business/business-routes.js";
+import { PostgresBusinessRepository } from "./modules/business/postgres-business-repository.js";
 
 const app = express();
 const port = env.port;
@@ -67,11 +75,26 @@ if (authConfig.every(Boolean)) {
   const risk = new RiskService(riskRepository);
   const otp = new OtpService(new PostgresOtpRepository(), new BulkSmsProvider(), requiredEnv("OPPA_OTP_PEPPER"), env.bulkSmsSenderId, env.bulkSmsCallbackUrl, risk);
   const sessions = new SessionService(sessionRepository, requiredEnv("OPPA_REFRESH_TOKEN_PEPPER"), requiredEnv("OPPA_ACCESS_TOKEN_SECRET"));
-  const auth = new AuthService(otp, new PostgresIdentityRepository(), sessions, devices);
+  const auth = new AuthService(otp, new PostgresIdentityRepository(), sessions, devices, new PostgresSecurityEventRecorder());
 
   app.use("/v1/auth", createAuthRouter(auth));
   const protectedRouter = express.Router();
   protectedRouter.use(createRequireAuth(requiredEnv("OPPA_ACCESS_TOKEN_SECRET"), sessionRepository));
+
+  protectedRouter.use("/account", createAccountRouter(sessions, devices, new PostgresSecurityEventRecorder()));
+
+  const notificationRepository = new PostgresNotificationRepository();
+  const notifications = new NotificationService(notificationRepository);
+  protectedRouter.use("/notifications", createNotificationRouter(notifications, notificationRepository));
+  // Background delivery worker: drains the durable outbox periodically without
+  // keeping the event loop alive (unref) so tooling/tests can exit cleanly.
+  const notificationWorker = setInterval(() => {
+    notifications.processBatch(20).catch(() => {
+      // Worker failures are durable in the outbox (attempts/last_error); the
+      // next tick retries with backoff.
+    });
+  }, 60_000);
+  notificationWorker.unref?.();
 
   const securityRepository = new PostgresSecurityProofRepository();
   const security = new SecurityService(securityRepository);
@@ -80,17 +103,21 @@ if (authConfig.every(Boolean)) {
 
   protectedRouter.use("/security", createSecurityRouter(security));
   protectedRouter.use("/admin", createAdminRouter(riskRepository));
+  protectedRouter.use("/admin", createAdminEmergencyRouter());
   protectedRouter.use("/profile", createProfileRouter(new PostgresProfileRepository()));
   protectedRouter.use("/contacts", createContactRouter(new PostgresContactRepository()));
-  protectedRouter.use("/conversations", createConversationRouter(new PostgresConversationRepository()));
-  protectedRouter.use("/", createMessagingRouter(new PostgresMessageRepository()));
+  const messageRepository = new PostgresMessageRepository();
+  protectedRouter.use("/conversations", createConversationRouter(new PostgresConversationRepository(), messageRepository));
+  protectedRouter.use("/", createMessagingRouter(messageRepository));
+  protectedRouter.use("/business", createBusinessRouter(new PostgresBusinessRepository()));
   protectedRouter.use("/wallet", createWalletRouter(new PostgresWalletRepository(), new PostgresWalletTransferRepository(riskRepository), sensitiveAuthorization));
 
   const providers:any = {};
   if (env.paystackSecret) providers.paystack = new PaystackProvider(env.paystackSecret);
   if (env.flutterwaveSecret && env.flutterwaveWebhookSecret) providers.flutterwave = new FlutterwaveProvider(env.flutterwaveSecret, env.flutterwaveWebhookSecret);
-  const payments = new PaymentService(new PostgresPaymentRepository(), providers, sensitiveAuthorization, risk);
-  protectedRouter.use("/payments", createPaymentRouter(payments));
+  const paymentRepository = new PostgresPaymentRepository();
+  const payments = new PaymentService(paymentRepository, providers, sensitiveAuthorization, risk);
+  protectedRouter.use("/payments", createPaymentRouter(payments, paymentRepository));
   app.use("/v1/payments/webhooks", createPaymentWebhookRouter(payments));
   app.use("/v1", protectedRouter);
 }

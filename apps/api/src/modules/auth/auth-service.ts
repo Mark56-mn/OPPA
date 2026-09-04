@@ -4,12 +4,26 @@ import type { IdentityRepository } from "../identity/identity-repository.js";
 import type { SessionService } from "../session/session-service.js";
 import type { DeviceService } from "../device/device-service.js";
 
+type SecurityEventInput = {
+  userId: string;
+  deviceId?: string;
+  sessionId?: string;
+  eventType: string;
+  severity: "info" | "warning" | "critical";
+  metadata?: Record<string, unknown>;
+};
+
+export interface SecurityEventRecorder {
+  record(input: SecurityEventInput): Promise<void>;
+}
+
 export class AuthService {
   constructor(
     private readonly otp: OtpService,
     private readonly identities: IdentityRepository,
     private readonly sessions: SessionService,
-    private readonly devices: DeviceService
+    private readonly devices: DeviceService,
+    private readonly events?: SecurityEventRecorder
   ) {}
 
   async requestOtp(rawPhone: string) {
@@ -35,10 +49,32 @@ export class AuthService {
     }
 
     const device = await this.devices.register(user.id, deviceId, "unknown");
+    await this.recordSecurityEvent(user.id, device.id, "security.new_device_login", "info", {
+      deviceId: device.id,
+      returning: Boolean(existing)
+    });
     return this.sessions.create(user.id, device.id);
   }
 
   async refresh(refreshToken: string) {
     return this.sessions.refresh(refreshToken);
+  }
+
+  /**
+   * Records security events without ever letting observability break the
+   * authentication flow.
+   */
+  private async recordSecurityEvent(
+    userId: string,
+    deviceId: string,
+    eventType: string,
+    severity: "info" | "warning" | "critical",
+    metadata: Record<string, unknown>
+  ) {
+    try {
+      await this.events?.record({ userId, deviceId, eventType, severity, metadata });
+    } catch {
+      // Observability must not block authentication.
+    }
   }
 }

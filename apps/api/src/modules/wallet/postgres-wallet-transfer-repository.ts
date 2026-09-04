@@ -4,6 +4,13 @@ import type { WalletTransferRepository, WalletTransferResult } from "./wallet-tr
 import type { RiskRepository } from "../risk/risk-repository.js";
 import { assessTransferLimits } from "../risk/transfer-limits.js";
 
+// Durable notification outbox: enqueue in the SAME transaction as the money
+// movement so a notification exists if and only if the transfer committed.
+const TRANSFER_OUTBOX_SQL = `
+  insert into public.oppa_notification_outbox(event_type,user_id,dedupe_key,payload)
+  values('wallet.transfer.completed',$1,$2,$3::jsonb)
+  on conflict (dedupe_key) where dedupe_key is not null do nothing`;
+
 function requireDb() {
   if (!db) throw new Error("DATABASE_URL is not configured");
   return db;
@@ -91,6 +98,18 @@ export class PostgresWalletTransferRepository implements WalletTransferRepositor
         [input.fromUserId, transferId, JSON.stringify({ toUserId: input.toUserId, amountMinor: input.amountMinor, reference: input.reference })]
       );
       await this.risk?.incrementTransferCounters(input.fromUserId, new Date(), input.amountMinor);
+      // Notification payloads carry no amounts/references beyond the opaque
+      // transfer id — never expose financial detail in notification bodies.
+      await client.query(TRANSFER_OUTBOX_SQL, [
+        input.toUserId,
+        `wallet_transfer_received:${transferId}`,
+        JSON.stringify({ category: "wallet", title: "Money received", body: "You have received a transfer on OPPA", metadata: { transferId } })
+      ]);
+      await client.query(TRANSFER_OUTBOX_SQL, [
+        input.fromUserId,
+        `wallet_transfer_sent:${transferId}`,
+        JSON.stringify({ category: "wallet", title: "Transfer sent", body: "Your transfer was completed", metadata: { transferId } })
+      ]);
       await client.query("commit");
       const row = created.rows[0];
       return { ...row, amountMinor: Number(row.amountMinor) };

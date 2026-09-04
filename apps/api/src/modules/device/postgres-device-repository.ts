@@ -11,5 +11,8 @@ export class PostgresDeviceRepository implements DeviceRepository{
    returning id`,[id,input.userId,input.publicKey,input.platform]);
   return {id:r.rows[0].id};
  }
- async revoke(deviceId:string,userId:string){await requireDb().query(`update public.oppa_devices set status='revoked' where id=$1 and user_id=$2 and status='active'`,[deviceId,userId]);}
+ async revoke(deviceId:string,userId:string){
+  const r=await requireDb().query(`update public.oppa_devices set status='revoked', last_seen_at=now() where id=$1 and user_id=$2 and status='active' returning id`,[deviceId,userId]);
+  if(r.rowCount!==1) throw new Error("DEVICE_NOT_FOUND");
+ }
 }

@@ -4,7 +4,7 @@
 Durable resume state for autonomous Codex sessions. The next agent must read this file together with `OPPA_MASTER_BUILD_SPEC.md`, `CODEX_AUTOPILOT.md` and `CODEX_BUILD_MAP.md`.
 
 ## LAST UPDATED
-2026-09-04
+2026-09-04 (session: notifications, business, admin emergency, messaging receipts implemented and verified)
 
 ## CURRENT BASELINE
 
@@ -80,11 +80,36 @@ The previous agent identified that merchant self-ordering is currently allowed. 
 
 WhatsApp is not in this V1 order.
 
+## SESSION 2026-09-04 — COMPLETED WORK (uncommitted at session end)
+
+### Verified baseline
+- `bun run api:typecheck` PASS; `bun test src` (apps/api) 85 pass / 5 skip / 0 fail. The 5 skips are Postgres integration tests requiring `DATABASE_URL` (unchanged limitation).
+- Prior-session uncommitted work was reviewed, fixed and kept: account surface (`/v1/account`), auth security events, session crypto HMAC pepper hardening, payment history via repository.
+
+### Implemented this session (all uncommitted — owner merges manually)
+1. **Messaging completion** (migration 0014 wired): per-member delivery/read receipts, mark-read (self receipts only), per-message receipts, edit/delete with ownership checks, unread counts; group conversations (create/add-member with owner-admin gating/leave); routes under `/v1/conversations` and `/v1`; tests in `src/modules/messaging/messaging.test.ts`.
+2. **Notifications + Event Delivery** (migration 0015 wired): durable outbox with dedupe keys, SKIP LOCKED worker claiming, in-app delivery, preferences, exponential backoff (30s→480s), staff-gated `/v1/notifications/process`, background worker in `server.ts` (60s, unref). Transactional outbox hooks: wallet transfer (sender+receiver), payment settlement, business orders. Tests: `src/modules/notifications/notifications.test.ts`.
+3. **Business/Merchant** (migration 0016 wired): businesses/staff/products/orders/analytics; customer wallet→owner wallet settlement atomically with ledger entries; **self-ordering blocker enforced server-side in `createOrder`** (any staff row on the business disqualifies the caller) — test `merchant staff cannot create a customer order against their own business`. Routes under `/v1/business`. Tests: `src/modules/business/business.test.ts`.
+4. **Admin/Control Center** (migration 0017 wired): emergency actions (freeze/unfreeze user, revoke all sessions, suspend/restore business) requiring `emergency.execute` permission + reason 5-500 chars + `confirm:"CONFIRM"` + self-targeting prevention + append-only audit + emergency_actions record; audit/security-events/users(masked phones) views. Routes under `/v1/admin`. Tests: `src/modules/admin/admin-emergency.test.ts`.
+5. Housekeeping: duplicate `revokeDevice` repository method consolidated into existing `revoke`; removed stale `message-lifecycle.ts` interface file; new error codes mapped in `http/error-handler.ts`; `package.json` test glob quoted so `bun test` doesn't pick up `dist/`.
+
+### Verification evidence (executed this session)
+- test: PASS (85 pass / 5 skip / 0 fail, `bun test src` in apps/api)
+- typecheck: PASS (`bun run api:typecheck`)
+- build: PASS (`bun run build`, dist/server.js emitted; dist removed after verification to keep tree clean)
+- diff audit: no TODOs/stubs/501 paths, no WhatsApp references, no hard-coded secrets in apps/api/src or database/
+
+### Known limitations (not regressions)
+- Postgres integration suite still requires `DATABASE_URL`; migrations 0014-0017 not executed against a live database this session. Run them before deploy.
+- Notifications are in-app only (per V1 plan); external provider adapters are a later milestone.
+- `/v1/notifications/process` requires the `notifications.read` staff permission (granted by migration 0017 to admin/super_admin roles).
+
 ## NEXT EXACT TASK
 
-Start by inspecting the current main repository and verify whether Auth/Identity, Device/Session, Messaging, Wallet, Payments, Security and Risk still have any incomplete gates. Fix the highest-priority V1 blocker found. Do not start WhatsApp.
-
-If those foundations are sufficiently closed, proceed to **Notifications + Event Delivery**, then Admin, Business, Calls and the Flutter application in order.
+1. Commit the coherent uncommitted work above (owner merge policy applies).
+2. Apply migrations 0014-0017 on a Postgres instance with `DATABASE_URL` set and re-run the full suite including integration tests.
+3. Continue V1 execution order: **OPPA-native Calls** (signaling/media/security architecture), then **Flutter mobile integration**, then Web/Admin/Trust surfaces, then Operations + Launch QA.
+4. Do not start WhatsApp (V2).
 
 ## NOTIFICATIONS TARGET
 

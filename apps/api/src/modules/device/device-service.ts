@@ -13,4 +13,10 @@ export class DeviceService{
   const normalizedPlatform=platforms.has(platform as DevicePlatform)?platform as DevicePlatform:"unknown";
   return this.devices.register({userId,publicKey,platform:normalizedPlatform});
  }
+ /** Revokes a device owned by the user. Its sessions die with the active-device checks. */
+ async revokeDevice(userId:string,deviceId:string){
+  if(!userId||userId.length>128||!deviceId||deviceId.length>128)throw new Error("DEVICE_ID_INVALID");
+  const r=await this.devices.revoke(deviceId,userId);
+  return r;
+ }
 }
