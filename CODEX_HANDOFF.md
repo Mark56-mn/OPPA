@@ -1,190 +1,124 @@
-# Codex Handoff
+# OPPA CODEX HANDOFF
 
 ## Purpose
-Durable handoff for autonomous Codex sessions. Update this file whenever a session ends because of credits, context, time, environment limits or interruption.
+Durable resume state for autonomous Codex sessions. The next agent must read this file together with `OPPA_MASTER_BUILD_SPEC.md`, `CODEX_AUTOPILOT.md` and `CODEX_BUILD_MAP.md`.
 
-## Last initialized
-2026-09-02
+## LAST UPDATED
+2026-09-04
 
-## Read first
-1. `OPPA_MASTER_BUILD_SPEC.md` — complete application/product/build map.
-2. `CODEX_AUTOPILOT.md` — autonomous operating contract.
-3. This file — current durable session state.
+## CURRENT BASELINE
 
-## Current repository reality
-The OPPA repository already contains a substantial TypeScript backend foundation under `apps/api/src`, including Auth/OTP/Identity/Device/Session/SMS, Profile, Contact, Messaging, Wallet, Payments, Admin and Security modules. Database migrations and Codex documentation are also present.
+Current main baseline before this documentation update:
+- `024fb4f30b14f35589447b243be4becbb1988274` — merged Risk + Wallet money-safety (PR #6).
+- `6372d0b23030b12cdb1e149fe199a942dcc4463e` — autonomous completion task added.
 
-Do not rebuild the foundation blindly. Inspect the actual current branch, code, migrations and tests before changing anything.
+This handoff is now aligned to the current V1 scope and the product decision that WhatsApp is V2, not V1.
 
-## Session 2026-09-03 (first) — Security Core intent binding closure (branch `codex/security-core-closure`, PR #5, now rebased on PR #4)
+## IMPORTANT PRODUCT DECISION — LOCKED
 
-SESSION STOP REASON: coherent Security Core batch verified and committed on a feature branch (owner requested no commits to main).
+**WhatsApp is excluded from OPPA V1.**
 
-COMPLETED:
-- Cryptographic intent binding for sensitive authorizations:
-  - `apps/api/src/modules/security/intent-binding.ts` — canonical intent serialization (sorted keys) + sha256 intent hashing with depth/size guards.
-  - `database/migrations/0012_security_intent_binding.sql` — `intent_hash` column on `oppa_step_up_challenges` + partial unique index enforcing exactly one active challenge per user+purpose.
-  - `DeviceProofService` now verifies signatures over `challenge + "." + canonicalIntent` when the challenge was created with an intent; `SecurityService.createStepUp/consumeStepUp` accept and validate the intent.
-  - Wallet transfer route derives the intent server-side (`toUserId`, `amountMinor`, `currency`, `reference`) so a captured proof cannot authorize different transaction parameters.
-  - Payment reversal implemented end-to-end: `PaymentService.reverse()` (ownership check via new `PaymentRepository.findById`, intent-bound `payment_reversal` authorization, then atomic `reverseAndDebit`), protected `POST /payments/reverse` route, 401/404/409 mappings.
-- Failure auditing: every rejected device proof and step-up consumption now increments attempts and records `security.device_proof_failed` / `security.step_up_failed` events with reasons (challenge_not_found, device_mismatch, challenge_invalid, intent_mismatch, device_key_unavailable, signature_invalid).
-- Atomicity: concurrent consumption consumes exactly once (existing atomic UPDATE retained); concurrent challenge creation is now rejected with `STEP_UP_CHALLENGE_CONFLICT` (409) instead of silently leaving two active challenges.
-- Tests: 53 total (48 pass, 5 Postgres integration tests added and skipped when `DATABASE_URL` is unset). New route-level HTTP tests for wallet transfer and payment reversal intent flow; extended unit tests for intent binding/failure events.
-- CI: `.github/workflows/api.yml` now runs the full `npm test` suite instead of one OTP test.
+OPPA is not WhatsApp and is not affiliated with WhatsApp. Do not implement or expose WhatsApp API/Cloud API integration, WhatsApp account linking, WhatsApp Business onboarding, WhatsApp inbox/sync, WhatsApp-specific database models/routes/UI, WhatsApp Web automation/scraping, personal WhatsApp contact/message import or WhatsApp calls in V1.
 
-FILES CHANGED (on branch `codex/security-core-closure`, not main):
-- `database/migrations/0012_security_intent_binding.sql` (new; supersedes PR #4's `0012_sensitive_context_binding.sql`, which is removed)
-- `apps/api/src/modules/security/intent-binding.ts` (new)
-- `apps/api/src/modules/security/security-repository.ts`, `security-service.ts`, `device-proof-service.ts`, `sensitive-authorization.ts`, `default-sensitive-authorization.ts`, `security-routes.ts`, `postgres-security-repository.ts`, `postgres-security-proof-repository.ts`
-- `apps/api/src/modules/wallet/wallet-routes.ts`, `apps/api/src/modules/payments/payment-service.ts`, `payment-routes.ts`, `payment-repository.ts`, `postgres-payment-repository.ts`
-- `apps/api/src/http/error-handler.ts`, `.github/workflows/api.yml`, `docs/API.md`, `docs/SECURITY.md`
-- Tests: `security-service.test.ts`, `device-proof-service.security.test.ts`, `sensitive-authorization.test.ts`, `wallet-routes.test.ts` (new), `payment-routes.test.ts` (new), `postgres-security-repository.test.ts` (new)
+The future V2 strategy is optional **OPPA Business external-channel integration** if officially authorized by Meta at that time. The purpose is to let eligible businesses use OPPA as their operating layer while optionally serving existing customers through authorized external channels. V2 must begin with fresh verification of current provider documentation, eligibility, permissions, policies, pricing and App Review requirements.
 
-VERIFIED (executed in this session):
-- test: PASS — `npm test` in `apps/api`: 48 pass, 0 fail, 5 skipped (Postgres integration tests; `DATABASE_URL` unset).
-- typecheck: PASS — `npm run typecheck` (tsc --noEmit).
-- build: PASS — `npm run build` (tsc).
-- diff: PASS — `git diff --check`.
+## CURRENT IMPLEMENTATION REALITY
 
-PARTIALLY COMPLETED:
-- Provider-initiated payment refund webhooks remain stubbed (`501 PAYMENT_REVERSAL_NOT_IMPLEMENTED`); requires real provider refund API integration before advertising refunds.
+The repository contains a substantial TypeScript API foundation:
+- Auth/OTP/Identity
+- SMS provider abstraction
+- Device/Session/access tokens
+- Profile/Contacts
+- Messaging foundation
+- Wallet/Ledger/Transfers
+- Paystack/Flutterwave payment foundations
+- Security Core
+- Risk/Abuse
+- Admin/RBAC foundation
 
-NOT DONE:
-- Postgres integration tests were written but NOT executed here (no `DATABASE_URL` in this environment). Run them where a database is configured.
+### Security Core work merged into main
 
-KNOWN FAILURES/RISKS:
-- None known in the executed unit/route test suite.
-- `bun.lock` is untracked at the repo root (environment artifact) and was intentionally left out of the commit.
+Security work includes intent-bound sensitive authorization, device-bound proofs, active-device checks, atomic challenge consumption, failure auditing and payment reversal authorization. Historical verification recorded 48 passing tests with 5 Postgres integration tests skipped because `DATABASE_URL` was unavailable, plus passing typecheck/build/diff checks. Re-run verification against current main before relying on historical results.
 
-NEXT EXACT TASK:
-- Merge PR #4, then this branch (PR #5) — they now stack cleanly with the intent-binding feature reconciled to a single implementation.
+### Risk + money-safety work merged into main
 
-MANUAL OWNER ACTION:
-- Review PR #4 (`oppa/security-payments-final`) then PR #5, and merge in that order.
-- Provide `DATABASE_URL` to run integration tests.
+Risk/Wallet work includes deterministic risk decisions, risk events, transfer limits, daily counters, operator blocks/review, payment recent counters and OTP abuse events. Admin risk endpoints were seeded behind permission checks.
 
-## Session 2026-09-03 (second) — Risk & Abuse + wallet/payment money-safety (branch `codex/risk-wallet-money-readiness`, PR #6, rebased on PR #5)
+Historical limitations still require closure:
+- registration/login/device/merchant/spam anomaly signals may need wiring;
+- Admin Control Center is not complete;
+- Notifications/Event Delivery is incomplete;
+- Business is incomplete;
+- Flutter/web/admin/trust surfaces are incomplete;
+- provider refunds/reconciliation are not production-complete;
+- Postgres integration suite still requires a configured `DATABASE_URL` for execution.
 
-SESSION STOP REASON: coherent money-safety batch verified and committed on a feature branch (owner requires no commits to main).
+## KNOWN BUSINESS SECURITY ISSUE
 
-COMPLETED:
-- Risk & Abuse deterministic engine (roadmap module 6, first version):
-  - `database/migrations/0013_risk_wallet_safety.sql` — `oppa_risk_events`, `oppa_risk_decisions`, `oppa_wallet_limits`, `oppa_wallet_daily_counters` (+ RLS, indexes, fraud-analyst permission grants).
-  - `apps/api/src/modules/risk/` — `RiskRepository` interface, `PostgresRiskRepository`, `RiskService` (validated event recording + active operator decisions), pure `transfer-limits` assessment.
-- Wallet transfer limits enforced atomically: single / daily-total / daily-count limits checked inside the same transaction that moves money; daily counters incremented atomically with the transfer (serialized by the existing wallet row locks); audit event `wallet.transfer.created` written in-transaction.
-- Operator decisions enforced server-side: `user`/`transfer` block fails transfers closed (`WALLET_TRANSFER_BLOCKED`, 409); `payment` block/review stops settlement before credit (`PAYMENT_RISK_BLOCKED` 403 / `PAYMENT_REQUIRES_REVIEW` 409).
-- Payment risk now uses real counters: `PaymentRepository.countRecent` (24h paid/failed) replaces hardcoded zeros in webhook settlement (supersedes PR #4's `recentPaymentStats`).
-- OTP abuse events recorded on cooldown / hourly-limit / attempts-exceeded paths (optional `RiskService` dependency, existing tests unaffected).
-- Admin Control Center seed: `/admin/risk/decisions` GET+POST and `/admin/risk/events` GET behind `fraud.review` permission; admin router now mounted in `server.ts` under the protected router.
-- Tests: 48 total, all passing. New: transfer-limits, risk-service, payment-risk, payment-service webhook settlement (operator block/review, real counters, webhook rejection), OTP abuse event.
+The previous agent identified that merchant self-ordering is currently allowed. Before Business is marked complete:
+- merchant owner/staff must not create a normal customer order against its own business;
+- enforce the rule server-side;
+- prevent normal settlement/reward/fee abuse through self-ordering;
+- add regression/adversarial tests.
 
-FILES CHANGED (branch `codex/risk-wallet-money-readiness`, not main):
-- `database/migrations/0013_risk_wallet_safety.sql` (new)
-- `apps/api/src/modules/risk/` (new: risk-repository.ts, postgres-risk-repository.ts, risk-service.ts, transfer-limits.ts, transfer-limits.test.ts, risk-service.test.ts)
-- `apps/api/src/modules/wallet/postgres-wallet-transfer-repository.ts`
-- `apps/api/src/modules/payments/` (payment-service.ts, payment-repository.ts, postgres-payment-repository.ts, payment-service.test.ts, payment-risk.test.ts)
-- `apps/api/src/modules/otp/otp-service.ts`, `otp-service.test.ts`
-- `apps/api/src/modules/admin/admin-routes.ts`, `apps/api/src/http/error-handler.ts`, `apps/api/src/server.ts`
-- `.github/workflows/api.yml` (full test suite), `docs/SECURITY.md`, `docs/API.md`, `CODEX_HANDOFF.md`
+## V1 EXECUTION ORDER
 
-VERIFIED (executed in this session):
-- test: PASS — `npm test` in `apps/api`: 48 pass, 0 fail, 5 skipped (Postgres integration tests; `DATABASE_URL` unset).
-- typecheck: PASS — `npm run typecheck`.
-- build: PASS — `npm run build`.
-- diff: PASS — `git diff --check` (run before commit).
+1. Auth + Identity closure
+2. Device + Session closure
+3. Messaging completion
+4. Wallet closure
+5. Payments closure
+6. Security Core adversarial audit
+7. Risk + Abuse completion/wiring
+8. Notifications + Event Delivery
+9. Admin / Control Center
+10. Business / Merchant
+11. OPPA-native Calls
+12. Flutter mobile integration
+13. Web/Admin/Trust surfaces
+14. Operations + Launch QA
 
-PARTIALLY COMPLETED:
-- Registration-velocity, login-anomaly, device-anomaly, merchant-risk and spam signals are defined in the schema but not yet wired to auth/device flows (interface is extensible).
-- Admin Control Center remains a seed (risk endpoints only); full console is a later roadmap module.
-- Payment provider refund APIs still not integrated (reversal webhooks remain `501`); real-money refunds must not be advertised until wired.
+WhatsApp is not in this V1 order.
 
-NOT DONE:
-- Notifications/Event Delivery (module 7), Admin/Control Center completion (8), Business (9), WhatsApp/Calls (10), Flutter/web surfaces (11), Operations/Launch QA (12).
-- No Postgres-backed integration run in this environment (no `DATABASE_URL`); migrations 0012-0013 have not been applied anywhere.
+## NEXT EXACT TASK
 
-KNOWN FAILURES/RISKS:
-- Payment risk thresholds are the pre-existing main-branch policy (large amount alone does not block; block requires score >= 70). Threshold tuning is a product decision and should be reviewed before launch.
-- Daily counters roll at UTC midnight; acceptable for v1, revisit for local-time zones.
-- `bun.lock` untracked at repo root (environment artifact), intentionally not committed.
+Start by inspecting the current main repository and verify whether Auth/Identity, Device/Session, Messaging, Wallet, Payments, Security and Risk still have any incomplete gates. Fix the highest-priority V1 blocker found. Do not start WhatsApp.
 
-NEXT EXACT TASK:
-- After PRs #4 and #5 merge, merge this branch (PR #6) — it stacks cleanly on top.
+If those foundations are sufficiently closed, proceed to **Notifications + Event Delivery**, then Admin, Business, Calls and the Flutter application in order.
 
-MANUAL OWNER ACTION:
-- Review PRs #4 → #5 → #6 in order; merge after each is reviewed.
-- Review payment-risk thresholds and wallet limit defaults (NGN 1M single / 5M daily / 50 count) before any real-money go-live.
-- Provide `DATABASE_URL` so migrations 0001-0013 and integration tests can be executed.
+## NOTIFICATIONS TARGET
 
-The previous Security Core audit recorded:
-- API test suite restored to the repository's Node test runner.
-- Device-proof verification validates the presented challenge hash before device signature verification.
-- Persisted challenges are atomically consumed.
-- Invalid signatures/unavailable active keys record/increment failures.
-- Security validation failures map to intentional HTTP statuses.
-- Server startup TypeScript issue fixed.
-- `PostgresSecurityRepository` restored to active-device validation conformance.
+Build provider-agnostic event/delivery infrastructure for security, login/device, messaging, wallet, payment, support and business events. Include in-app notifications, preferences, durable outbox/event semantics, idempotency, delivery status, retries/backoff and background processing. Never put OTPs, tokens, signatures or unnecessary sensitive financial/security information in notification payloads.
 
-Historical checks recorded as passed (must be rerun against the current repository before relying on them):
-- `npm test --workspace @oppa/api` — 22 tests.
-- `npm run api:typecheck` — passed.
-- `npm run build` — passed.
-- `git diff --check` — passed.
+## BUSINESS TARGET
 
-## Product/build target
-Build the complete OPPA application described in `OPPA_MASTER_BUILD_SPEC.md`:
+Build merchant onboarding/profile, staff roles, customers, products, orders, payments, merchant wallet/settlement boundaries, analytics and fraud/support controls. Keep merchant permissions separate from consumer wallet permissions. Enforce the self-ordering rule above.
 
-- phone-first identity/authentication;
-- complete secure messaging;
-- groups/media/realtime/offline sync/notifications;
-- wallet and secure transfers;
-- payment integrations, settlement, refunds/reconciliation;
-- Security Core and recovery;
-- Risk & Abuse;
-- notifications/event delivery;
-- Admin/Control Center;
-- Business/merchant capabilities;
-- authorized WhatsApp-connected capabilities and calls;
-- Flutter mobile application;
-- web/admin/trust surfaces;
-- operations/launch readiness.
+## CALLS TARGET
 
-Three tokenized themes are required across the application:
+Calls are OPPA-native, not WhatsApp. Build dedicated signaling/media/security architecture and do not claim external-platform calling support.
+
+## FLUTTER TARGET
+
+The mobile app must be a real V1 application connected to the API, not static mock screens. Required journey:
+
+Onboarding → Phone → OTP → Profile → Theme → Home → Chats → Contacts → Wallet → Payments → Business → Connect → Me/Security
+
+Use tokenized themes:
 - Fluid Africa
 - OPPA Pulse
 - Everyday OPPA
 
-Browser is V1.5/later unless scope changes. VPN is V2. Mini Apps are post-V1.
+## VERIFICATION RULE
 
-## Next execution order
-1. Inspect current Security Core state and git history.
-2. Rerun build/typecheck/tests.
-3. Add/finish route-level integration tests with real PostgreSQL where available.
-4. Complete Security Core adversarial audit.
-5. Complete Risk & Abuse.
-6. Complete Notifications/Event Delivery.
-7. Finish Admin/Control Center.
-8. Finish Business.
-9. Finish authorized WhatsApp/Calls.
-10. Build/integrate Flutter mobile and web/admin surfaces against the real API.
-11. Complete Operations/Launch QA.
-12. Defer Browser/VPN/Mini Apps according to the master spec.
+For every module, inspect source/interfaces/migrations/routes/tests; implement the complete vertical slice; audit authentication, authorization, ownership, replay, idempotency, concurrency, abuse, error leakage and secrets; run available tests/typecheck/build/lint/schema checks; inspect the final diff; and update this handoff.
 
-If a dependency requires a different order, record the reason and choose the safest executable path.
+Never claim a test, migration, integration or deployment passed unless it was actually verified.
 
-## Credit exhaustion protocol — mandatory
+## CREDIT / SESSION STOP PROTOCOL
 
-If Codex runs out of credits/context/time/environment capacity:
+If credits/context/time/environment capacity run out:
 
-- do not start new work;
-- save all coherent completed changes;
-- run the fastest meaningful checks available;
-- commit coherent work;
-- update this file immediately;
-- explicitly state completed vs partial vs not done work.
-
-Use this exact structure:
-
-```text
 SESSION STOP REASON: credits/time/context/environment
 
 COMPLETED:
@@ -215,9 +149,9 @@ NEXT EXACT TASK:
 
 MANUAL OWNER ACTION:
 - ...
-```
 
-Never claim completion for unverified work. Never leave the next session guessing where to resume.
+Never leave the next session guessing where to resume.
 
-## Security reminder
-Never expose secrets. Never put provider credentials in Flutter or GitHub. Never invent cryptography or bypass platform/provider controls. Never let the client decide financial settlement or security authorization.
+## OWNER MERGE POLICY
+
+Owner performs merges manually. Do not spend credits on billing, CI/infrastructure or production credentials unless required for application correctness. Do not force merges or bypass security/quality gates.
