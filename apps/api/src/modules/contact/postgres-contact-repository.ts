@@ -17,4 +17,21 @@ export class PostgresContactRepository implements ContactRepository{
  async remove(userId:string,contactUserId:string){await requireDb().query("delete from public.oppa_contacts where user_id=$1 and contact_user_id=$2",[userId,contactUserId]);}
  async block(userId:string,contactUserId:string){await requireDb().query(`insert into public.oppa_contacts(user_id,contact_user_id,blocked_at) values($1,$2,now())
   on conflict(user_id,contact_user_id) do update set blocked_at=now()`,[userId,contactUserId]);}
+ /**
+  * Records an abuse report against another user. Idempotent per (reporter,
+  * reported) pair via a unique index: repeat reports refresh the reason and
+  * timestamp instead of inflating report counts.
+  */
+ async report(userId:string,contactUserId:string,reason:string){
+  if(userId===contactUserId)throw new Error("CONTACT_SELF_INVALID");
+  if(!reason||reason.length>500)throw new Error("CONTACT_REPORT_REASON_INVALID");
+  const r=await requireDb().query(`
+   insert into public.oppa_user_reports(reporter_user_id,reported_user_id,reason)
+   select $1,$2,$3 where exists(select 1 from public.oppa_users where id=$2 and status='active')
+   on conflict (reporter_user_id,reported_user_id)
+   do update set reason=excluded.reason, created_at=now()
+   returning id, reported_user_id as "reportedUserId", created_at as "createdAt"`,[userId,contactUserId,reason]);
+  if(!r.rows[0])throw new Error("USER_NOT_FOUND");
+  return r.rows[0];
+ }
 }

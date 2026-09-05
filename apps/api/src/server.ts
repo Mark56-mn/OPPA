@@ -48,6 +48,8 @@ import { NotificationService } from "./modules/notifications/notification-servic
 import { createNotificationRouter } from "./modules/notifications/notification-routes.js";
 import { createBusinessRouter } from "./modules/business/business-routes.js";
 import { PostgresBusinessRepository } from "./modules/business/postgres-business-repository.js";
+import { CallsService, PostgresCallsStore } from "./modules/calls/calls-service.js";
+import { createCallsRouter } from "./modules/calls/calls-routes.js";
 
 const app = express();
 const port = env.port;
@@ -110,6 +112,16 @@ if (authConfig.every(Boolean)) {
   protectedRouter.use("/conversations", createConversationRouter(new PostgresConversationRepository(), messageRepository));
   protectedRouter.use("/", createMessagingRouter(messageRepository));
   protectedRouter.use("/business", createBusinessRouter(new PostgresBusinessRepository()));
+
+  // OPPA-native calls (Stage L): authenticated signaling over REST polling.
+  const calls = new CallsService(new PostgresCallsStore());
+  protectedRouter.use("/", createCallsRouter(calls));
+  // Ring-timeout sweeper: expires stale ringing calls (missed-call semantics)
+  // without keeping the event loop alive.
+  const callSweeper = setInterval(() => {
+    calls.sweepStale().catch(() => {});
+  }, 30_000);
+  callSweeper.unref?.();
   protectedRouter.use("/wallet", createWalletRouter(new PostgresWalletRepository(), new PostgresWalletTransferRepository(riskRepository), sensitiveAuthorization));
 
   const providers:any = {};

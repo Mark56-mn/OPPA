@@ -7,5 +7,6 @@ export function createContactRouter(contacts:ContactRepository){
  router.post("/",requireJsonBody,async(req,res,next)=>{try{const {userId,nickname}=req.body??{};if(typeof userId!=="string"){res.status(400).json({error:"USER_ID_REQUIRED",requestId:res.locals.requestId});return;}res.status(201).json(await contacts.add(req.auth!.userId,userId,nickname));}catch(e){next(e);}});
  router.delete("/:userId",async(req,res,next)=>{try{await contacts.remove(req.auth!.userId,req.params.userId);res.status(204).send();}catch(e){next(e);}});
  router.post("/:userId/block",async(req,res,next)=>{try{await contacts.block(req.auth!.userId,req.params.userId);res.status(204).send();}catch(e){next(e);}});
+ router.post("/:userId/report",requireJsonBody,async(req,res,next)=>{try{const reason=req.body?.reason;if(typeof reason!=="string"||!reason.trim()||reason.length>500){res.status(400).json({error:"CONTACT_REPORT_REASON_INVALID",requestId:res.locals.requestId});return;}res.status(201).json(await contacts.report(req.auth!.userId,String(req.params.userId),reason.trim()));}catch(e){next(e);}});
  return router;
 }

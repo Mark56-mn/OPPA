@@ -3,6 +3,7 @@ import { normalizePhone } from "../identity/phone.js";
 import type { IdentityRepository } from "../identity/identity-repository.js";
 import type { SessionService } from "../session/session-service.js";
 import type { DeviceService } from "../device/device-service.js";
+import type { RiskService } from "../risk/risk-service.js";
 
 type SecurityEventInput = {
   userId: string;
@@ -23,7 +24,8 @@ export class AuthService {
     private readonly identities: IdentityRepository,
     private readonly sessions: SessionService,
     private readonly devices: DeviceService,
-    private readonly events?: SecurityEventRecorder
+    private readonly events?: SecurityEventRecorder,
+    private readonly risk?: RiskService
   ) {}
 
   async requestOtp(rawPhone: string) {
@@ -46,6 +48,41 @@ export class AuthService {
 
     if (existing && !existing.phoneVerifiedAt) {
       await this.identities.markPhoneVerified(existing.id, now);
+    }
+
+    // Risk gate: an operator block on the login scope denies authentication
+    // outright; a review decision records the anomaly but lets the login
+    // proceed for operator inspection. Risk unavailability must not lock
+    // everyone out, so a failing risk service is treated as observability.
+    if (this.risk) {
+      try {
+        const decision = await this.risk.getActiveDecision(user.id, "login");
+        if (decision === "block") {
+          await this.risk.recordEvent({
+            userId: user.id,
+            category: "login_anomaly",
+            signal: "login_blocked",
+            score: 100,
+            decision: "block",
+            reasons: ["Operator login block active"],
+            metadata: { deviceId }
+          });
+          throw new Error("ACCOUNT_UNAVAILABLE");
+        }
+        if (decision === "review") {
+          await this.risk.recordEvent({
+            userId: user.id,
+            category: "login_anomaly",
+            signal: "login_review",
+            score: 60,
+            decision: "review",
+            reasons: ["Operator login review active"],
+            metadata: { deviceId }
+          });
+        }
+      } catch (e) {
+        if (e instanceof Error && e.message === "ACCOUNT_UNAVAILABLE") throw e;
+      }
     }
 
     const device = await this.devices.register(user.id, deviceId, "unknown");
