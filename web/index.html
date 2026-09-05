@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>OPPA — Africa-first messaging, wallet, business and calls</title>
+<meta name="description" content="OPPA is an Africa-first platform for messaging, wallet, business and calls, built for unstable networks and low-end Android devices." />
+<style>
+  :root {
+    --bg: #1a120b; --surface: #2a1d12; --text: #f3e7db; --muted: #cbb59d;
+    --primary: #b4530a; --accent: #e8a44d; --ok: #3e9b5f; --danger: #d4483b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); line-height: 1.6; }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  header { padding: 24px 0; border-bottom: 1px solid rgba(243,231,219,.12); }
+  header .wrap { display: flex; align-items: center; justify-content: space-between; }
+  .logo { font-weight: 800; font-size: 1.4rem; letter-spacing: .12em; color: var(--accent); }
+  nav a { color: var(--muted); text-decoration: none; margin-left: 20px; font-size: .95rem; }
+  nav a:hover { color: var(--text); }
+  .hero { padding: 72px 0 48px; }
+  .hero h1 { font-size: clamp(2rem, 6vw, 3.2rem); line-height: 1.15; max-width: 18ch; }
+  .hero h1 span { color: var(--accent); }
+  .hero p { margin-top: 16px; max-width: 52ch; color: var(--muted); font-size: 1.05rem; }
+  .cta { display: inline-block; margin-top: 28px; background: var(--primary); color: #fff8f4;
+         padding: 14px 28px; border-radius: 12px; text-decoration: none; font-weight: 600; }
+  .cta:hover { filter: brightness(1.1); }
+  section { padding: 48px 0; border-top: 1px solid rgba(243,231,219,.08); }
+  h2 { font-size: 1.5rem; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .card { background: var(--surface); border-radius: 14px; padding: 20px; }
+  .card h3 { font-size: 1.05rem; margin-bottom: 8px; color: var(--accent); }
+  .card p { color: var(--muted); font-size: .95rem; }
+  footer { padding: 32px 0 48px; color: var(--muted); font-size: .9rem;
+           border-top: 1px solid rgba(243,231,219,.08); }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 16px; justify-content: space-between; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="logo">OPPA</div>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#trust">Trust &amp; Safety</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#support">Support</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <h1>Your network.<br />Your money.<br /><span>Your words.</span></h1>
+    <p>OPPA is an Africa-first platform for messaging, wallet, business and calls —
+       built for unstable networks and low-end Android devices. Messages survive
+       dropped connections. Balances are confirmed by the server, never guessed.</p>
+    <a class="cta" href="#features">See what OPPA does</a>
+  </div>
+</div>
+
+<section id="features">
+  <div class="wrap">
+    <h2>Built for how Africa connects</h2>
+    <div class="grid">
+      <div class="card"><h3>Messaging that waits for you</h3>
+        <p>Compose offline — messages send automatically when you reconnect. Nothing disappears because the network did.</p></div>
+      <div class="card"><h3>Wallet you can trust</h3>
+        <p>Every transfer is confirmed inside an atomic server transaction with device-verified step-up confirmation.</p></div>
+      <div class="card"><h3>Business tools</h3>
+        <p>Onboard a store, manage products and orders, and receive settled payments — with fraud controls built in.</p></div>
+      <div class="card"><h3>OPPA-native calls</h3>
+        <p>Voice and video designed for weak networks: audio-first fallback, adaptive quality and honest connection states.</p></div>
+      <div class="card"><h3>Data-friendly by default</h3>
+        <p>Pagination, compact payloads and no wasteful polling. Data-saving mode keeps expensive connections under control.</p></div>
+      <div class="card"><h3>Low-end Android first</h3>
+        <p>A small app footprint and light background work, so OPPA runs well on the devices people actually have.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="trust">
+  <div class="wrap">
+    <h2>Trust &amp; Safety</h2>
+    <div class="grid">
+      <div class="card"><h3>Device-bound sessions</h3>
+        <p>Sessions only work on registered devices. Lost a phone? Revoke it from any other signed-in device.</p></div>
+      <div class="card"><h3>Step-up for money</h3>
+        <p>Transfers and payment reversals require a fresh device-verified confirmation bound to the exact amount and recipient.</p></div>
+      <div class="card"><h3>Report and block</h3>
+        <p>Report abusive accounts confidentially and block anyone instantly. Reports go to a human review queue.</p></div>
+      <div class="card"><h3>Least-privilege operations</h3>
+        <p>Staff access is role-gated and audited. Operators cannot casually read your private conversations.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="privacy">
+  <div class="wrap">
+    <h2>Privacy</h2>
+    <div class="grid">
+      <div class="card"><h3>What we collect</h3>
+        <p>Your phone number (to verify your account), your profile details, and the minimum technical data needed to run the service securely.</p></div>
+      <div class="card"><h3>What we never do</h3>
+        <p>We never sell your data, never ask for your OTP, and never place your tokens or secrets in notification content.</p></div>
+      <div class="card"><h3>Your controls</h3>
+        <p>Manage notification preferences, sign out devices, and request account deletion through support.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="support">
+  <div class="wrap">
+    <h2>Support</h2>
+    <div class="grid">
+      <div class="card"><h3>Contact</h3>
+        <p>Email <a href="mailto:support@oppa.africa">support@oppa.africa</a> — replies within 24 hours.</p></div>
+      <div class="card"><h3>Report abuse</h3>
+        <p>Use Report inside any chat, or email us with details. Confidential by default.</p></div>
+      <div class="card"><h3>Money questions</h3>
+        <p>Payment and transfer issues are prioritised. Include your transaction reference from Wallet → Transactions.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div>© 2026 OPPA. All rights reserved.</div>
+    <div>OPPA is an independent product and is not affiliated with WhatsApp or Meta.</div>
+  </div>
+</footer>
+</body>
+</html>

@@ -11,7 +11,9 @@ export class SessionService{
   const refreshToken=generateRefreshToken(),now=Date.now();
   const record=await this.sessions.create({userId,deviceId,refreshTokenHash:hashRefreshToken(refreshToken,this.pepper),expiresAt:new Date(now+REFRESH_TTL_MS)});
   const access=issueAccessToken(userId,record.id,this.accessTokenSecret,now);
-  return {sessionId:record.id,accessToken:access.token,accessExpiresAt:access.expiresAt.toISOString(),refreshToken};
+  // deviceId is the enrolled device row id — clients must present it in
+  // step-up proofs, so it is part of the session contract.
+  return {sessionId:record.id,deviceId,accessToken:access.token,accessExpiresAt:access.expiresAt.toISOString(),refreshToken};
  }
  async refresh(refreshToken:string){
   if(!refreshToken||refreshToken.length>512)throw new Error("REFRESH_TOKEN_INVALID");
