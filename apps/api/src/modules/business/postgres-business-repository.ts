@@ -392,8 +392,113 @@ export class PostgresBusinessRepository {
     } catch (e) { try { await client.query("rollback"); } catch {} throw e; } finally { client.release(); }
   }
 
-  /** Merchant analytics: order totals and counts for the owner's dashboard. */
-  async analytics(businessId: string, actorUserId: string): Promise<{
+  /**
+   * Merchant fulfillment: a paid order is marked fulfilled by any staff
+   * member of the business. Idempotent: an already-fulfilled order is a
+   * no-op returning its current state; any other transition is rejected.
+   * Money is untouched here — settlement happened at payOrder time.
+   */
+  async fulfillOrder(orderId: string, actorUserId: string): Promise<OrderRecord> {
+    if (!orderId || orderId.length > 128) throw new Error("BUSINESS_ORDER_NOT_FOUND");
+    const client = await requireDb().connect();
+    try {
+      await client.query("begin");
+      // Lock the order first, then authorize the actor against its business —
+      // both inside the transaction so a role change concurrent with
+      // fulfillment cannot slip through the membership check.
+      const order = await client.query<OrderRecord & { amount_minor: string }>(
+        `select id, business_id as "businessId", customer_user_id as "customerUserId",
+                customer_order_reference as "customerOrderReference", amount_minor,
+                currency, status, metadata, created_at as "createdAt", updated_at as "updatedAt"
+         from public.oppa_business_orders where id=$1 for update`,
+        [orderId]
+      );
+      if (!order.rows[0]) throw new Error("BUSINESS_ORDER_NOT_FOUND");
+      const businessId = String(order.rows[0].businessId);
+      const role = await client.query(
+        `select role from public.oppa_business_staff where business_id=$1 and user_id=$2 limit 1`,
+        [businessId, actorUserId]
+      );
+      if (!role.rows[0]) throw new Error("BUSINESS_PERMISSION_DENIED");
+      const current = order.rows[0].status;
+      if (current === "fulfilled") {
+        await client.query("rollback");
+        return { ...order.rows[0], amountMinor: Number(order.rows[0].amount_minor) };
+      }
+      if (current !== "paid") throw new Error("BUSINESS_ORDER_STATE_INVALID");
+      const updated = await client.query<OrderRecord>(
+        `update public.oppa_business_orders set status='fulfilled', updated_at=now()
+         where id=$1 and status='paid'
+         returning id, business_id as "businessId", customer_user_id as "customerUserId",
+                   customer_order_reference as "customerOrderReference", amount_minor as "amountMinor",
+                   currency, status, metadata, created_at as "createdAt", updated_at as "updatedAt"`,
+        [orderId]
+      );
+      if (!updated.rows[0]) throw new Error("BUSINESS_ORDER_STATE_INVALID");
+      await client.query(
+        `insert into public.oppa_audit_events(actor_user_id,event_type,entity_type,entity_id,metadata)
+         values($1,'business.order_fulfilled','order',$2,$3::jsonb)`,
+        [actorUserId, orderId, JSON.stringify({ businessId })]
+      );
+      await client.query(
+        `insert into public.oppa_notification_outbox(event_type,user_id,dedupe_key,payload)
+         values('business.order_fulfilled',$1,$2,$3::jsonb)
+         on conflict (dedupe_key) where dedupe_key is not null do nothing`,
+        [String(order.rows[0].customerUserId), `order_fulfilled:${orderId}`, JSON.stringify({
+          category: "business", title: "Order fulfilled", body: "Your order was fulfilled by the merchant", metadata: { orderId }
+        })]
+      );
+      await client.query("commit");
+      return { ...updated.rows[0], amountMinor: Number(updated.rows[0].amountMinor) };
+    } catch (e) { try { await client.query("rollback"); } catch {} throw e; } finally { client.release(); }
+  }
+
+  /**
+   * Customer cancellation: a PENDING (unpaid) order can be cancelled by its
+   * own customer. Paid/fulfilled orders are never cancelled here — refunds
+   * are deliberately out of scope (documented); cancellation cannot move
+   * money because no money has moved for a pending order.
+   */
+  async cancelOrder(orderId: string, customerUserId: string): Promise<OrderRecord> {
+    if (!orderId || orderId.length > 128) throw new Error("BUSINESS_ORDER_NOT_FOUND");
+    const client = await requireDb().connect();
+    try {
+      await client.query("begin");
+      const order = await client.query<OrderRecord & { amount_minor: string }>(
+        `select id, business_id as "businessId", customer_user_id as "customerUserId",
+                customer_order_reference as "customerOrderReference", amount_minor,
+                currency, status, metadata, created_at as "createdAt", updated_at as "updatedAt"
+         from public.oppa_business_orders where id=$1 for update`,
+        [orderId]
+      );
+      if (!order.rows[0]) throw new Error("BUSINESS_ORDER_NOT_FOUND");
+      if (String(order.rows[0].customerUserId) !== customerUserId) throw new Error("BUSINESS_ORDER_NOT_FOUND");
+      const current = order.rows[0].status;
+      if (current === "cancelled") {
+        await client.query("rollback");
+        return { ...order.rows[0], amountMinor: Number(order.rows[0].amount_minor) };
+      }
+      if (current !== "pending") throw new Error("BUSINESS_ORDER_STATE_INVALID");
+      const updated = await client.query<OrderRecord>(
+        `update public.oppa_business_orders set status='cancelled', updated_at=now()
+         where id=$1 and status='pending'
+         returning id, business_id as "businessId", customer_user_id as "customerUserId",
+                   customer_order_reference as "customerOrderReference", amount_minor as "amountMinor",
+                   currency, status, metadata, created_at as "createdAt", updated_at as "updatedAt"`,
+        [orderId]
+      );
+      if (!updated.rows[0]) throw new Error("BUSINESS_ORDER_STATE_INVALID");
+      await client.query(
+        `insert into public.oppa_audit_events(actor_user_id,event_type,entity_type,entity_id,metadata)
+         values($1,'business.order_cancelled','order',$2,$3::jsonb)`,
+        [customerUserId, orderId, JSON.stringify({ businessId: order.rows[0].businessId })]
+      );
+      await client.query("commit");
+      return { ...updated.rows[0], amountMinor: Number(updated.rows[0].amountMinor) };
+    } catch (e) { try { await client.query("rollback"); } catch {} throw e; } finally { client.release(); }
+  }
+
+  /** Merchant analytics: order totals and counts for the owner's dashboard. */  async analytics(businessId: string, actorUserId: string): Promise<{
     ordersTotal: number; ordersPaid: number; revenueMinor: number;
   }> {
     const role = await this.roleOf(businessId, actorUserId);

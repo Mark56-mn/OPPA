@@ -128,6 +128,30 @@ export function createBusinessRouter(businesses: PostgresBusinessRepository) {
     } catch (e) { next(e); }
   });
 
+  // Merchant fulfillment: staff of the business mark a paid order fulfilled.
+  router.post("/orders/:orderId/fulfill", async (req, res, next) => {
+    try {
+      const orderId = String(req.params.orderId);
+      if (!orderId || orderId.length > 128) {
+        res.status(404).json({ error: "BUSINESS_ORDER_NOT_FOUND", requestId: res.locals.requestId });
+        return;
+      }
+      res.status(200).json(await businesses.fulfillOrder(orderId, req.auth!.userId));
+    } catch (e) { next(e); }
+  });
+
+  // Customer cancellation: only the order's own customer, only while unpaid.
+  router.post("/orders/:orderId/cancel", async (req, res, next) => {
+    try {
+      const orderId = String(req.params.orderId);
+      if (!orderId || orderId.length > 128) {
+        res.status(404).json({ error: "BUSINESS_ORDER_NOT_FOUND", requestId: res.locals.requestId });
+        return;
+      }
+      res.status(200).json(await businesses.cancelOrder(orderId, req.auth!.userId));
+    } catch (e) { next(e); }
+  });
+
   router.get("/:businessId/analytics", async (req, res, next) => {
     try {
       const businessId = String(req.params.businessId);

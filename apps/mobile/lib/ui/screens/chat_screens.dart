@@ -7,6 +7,7 @@ import "../../core/connectivity_service.dart";
 import "../../core/screen_data.dart";
 import "../../data/repositories.dart";
 import "../widgets/common.dart";
+import "call_screen.dart";
 
 /// Chats tab: conversation list with unread counts, cache-first.
 class ChatsScreen extends StatefulWidget {
@@ -124,6 +125,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   void initState() {
     super.initState();
     _load();
+    _checkIncomingCall();
   }
 
   @override
@@ -131,6 +133,41 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     _controller.dispose();
     _scroll.dispose();
     super.dispose();
+  }
+
+  /// Incoming-call pickup: when opening a thread, check the conversation's
+  /// call log for a call still ringing that the user did not start. Surfacing
+  /// it here (REST polling, no push dependency) keeps V1 Africa-first — the
+  /// server's 2-minute ring timeout guarantees no stale ringing forever.
+  Future<void> _checkIncomingCall() async {
+    final r = await widget.calls.history(_conversationId);
+    if (!mounted || !r.isSuccess || r.body is! Map) return;
+    final calls = (((r.body as Map)["calls"] as List?) ?? const [])
+        .whereType<Map>()
+        .toList();
+    for (final c in calls) {
+      final status = "${c["status"] ?? ""}";
+      if (status != "ringing") continue;
+      final callId = "${c["id"] ?? ""}";
+      if (callId.isEmpty) continue;
+      final invite = await widget.calls.events(_conversationId, callId, sinceSeq: 0);
+      if (!mounted) return;
+      final hasInvite = invite.isSuccess &&
+          invite.body is Map &&
+          ((invite.body as Map)["events"] as List?)
+              ?.whereType<Map>()
+              .any((e) => "${e["eventType"] ?? e["event_type"] ?? ""}" == "invite") ==
+          true;
+      if (!hasInvite) continue; // Only our own ring events; caller cancels are excluded by status.
+      Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => CallScreen(
+              calls: widget.calls,
+              conversationId: _conversationId,
+              callId: callId,
+              isCaller: false,
+              kind: "${c["kind"] ?? "audio"}")));
+      return;
+    }
   }
 
   Future<void> _load() async {
@@ -183,7 +220,19 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   Future<void> _startCall({required bool video}) async {
     final response = await widget.calls.start(_conversationId, video: video);
     if (!mounted) return;
-    if (response.isSuccess) {
+    if (response.isSuccess && response.body is Map) {
+      final body = (response.body as Map).cast<String, dynamic>();
+      final callId = "${body["call"]?["id"] ?? body["id"] ?? ""}";
+      if (callId.isNotEmpty) {
+        Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => CallScreen(
+                calls: widget.calls,
+                conversationId: _conversationId,
+                callId: callId,
+                isCaller: true,
+                kind: video ? "video" : "audio")));
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Calling…")));
     } else {

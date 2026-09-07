@@ -78,6 +78,7 @@ class HomeShell extends StatelessWidget {
                         notifications: notifications,
                         contacts: contacts,
                         conversations: conversations,
+                        business: business,
                         connectivity: connectivity,
                         onOpenNotifications: () {},
                         onOpenSupport: () => Navigator.of(context).push(

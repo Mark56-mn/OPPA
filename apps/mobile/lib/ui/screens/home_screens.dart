@@ -15,6 +15,7 @@ class HomeScreen extends StatefulWidget {
     required this.notifications,
     required this.contacts,
     required this.conversations,
+    required this.business,
     required this.connectivity,
     required this.onOpenNotifications,
     required this.onOpenSupport,
@@ -25,6 +26,7 @@ class HomeScreen extends StatefulWidget {
   final NotificationsRepository notifications;
   final ContactsRepository contacts;
   final ConversationsRepository conversations;
+  final BusinessRepository business;
   final ConnectivityService connectivity;
   final VoidCallback onOpenNotifications;
   final VoidCallback onOpenSupport;
@@ -40,7 +42,9 @@ class _HomeScreenState extends State<HomeScreen> {
   void _openConnect() {
     Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => ConnectScreen(
-            contacts: widget.contacts, conversations: widget.conversations)));
+            contacts: widget.contacts,
+            conversations: widget.conversations,
+            business: widget.business)));
   }
 
   @override
@@ -216,10 +220,12 @@ class ConnectScreen extends StatefulWidget {
     super.key,
     required this.contacts,
     required this.conversations,
+    required this.business,
   });
 
   final ContactsRepository contacts;
   final ConversationsRepository conversations;
+  final BusinessRepository business;
 
   @override
   State<ConnectScreen> createState() => _ConnectScreenState();
@@ -336,7 +342,17 @@ class _ConnectScreenState extends State<ConnectScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Connect")),
+      appBar: AppBar(
+        title: const Text("Connect"),
+        actions: [
+          IconButton(
+            tooltip: "Shop",
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => ShopScreen(business: widget.business))),
+            icon: const Icon(Icons.storefront_outlined),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
@@ -405,10 +421,174 @@ class _ConnectScreenState extends State<ConnectScreen> {
         ],
       ),
     );
+  }  static String _initial(String s) =>
+      s.isEmpty ? "?" : s.characters.first.toUpperCase();
+}
+
+/// Consumer shopping: browse a business's catalog, order and pay from the
+/// OPPA wallet. The server derives the amount from product prices and blocks
+/// self-ordering — the client cannot set prices or bypass the blocker.
+class ShopScreen extends StatefulWidget {
+  const ShopScreen({super.key, required this.business});
+
+  final BusinessRepository business;
+
+  @override
+  State<ShopScreen> createState() => _ShopScreenState();
+}
+
+class _ShopScreenState extends State<ShopScreen> {
+  final _businessIdController = TextEditingController();
+  List<Map> _products = const [];
+  String? _businessId;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _businessIdController.dispose();
+    super.dispose();
   }
 
-  static String _initial(String s) =>
-      s.isEmpty ? "?" : s.characters.first.toUpperCase();
+  Future<void> _browse() async {
+    final id = _businessIdController.text.trim();
+    if (id.isEmpty) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final r = await widget.business.listProducts(id);
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      if (r.isSuccess) {
+        _businessId = id;
+        _products = (((r.body as Map?)?["products"] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList();
+      } else {
+        _error = r.errorCode ?? "Could not load that business";
+      }
+    });
+  }
+
+  Future<void> _orderAndPay(Map product) async {
+    final businessId = _businessId;
+    if (businessId == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Confirm order"),
+        content: Text(
+            "Order ${product["name"]} for ₦ ${((product["priceMinor"] as num? ?? 0) / 100).toStringAsFixed(2)}?\n\nPayment comes from your OPPA wallet."),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text("Cancel")),
+          FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text("Order and pay")),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final reference = "shop-${DateTime.now().microsecondsSinceEpoch}";
+    // 1. Place the order (server computes the amount from product prices).
+    final placed = await widget.business.placeOrder(businessId, items: [
+      {"productId": product["id"], "quantity": 1}
+    ], customerOrderReference: reference);
+    if (!mounted) return;
+    if (!placed.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(placed.errorCode ?? "Could not place the order")));
+      return;
+    }
+    final orderId =
+        "${(placed.body as Map?)?["id"] ?? ""}";
+    // 2. Pay from the wallet (server debits/credits atomically).
+    final paid = await widget.business.payOrder(orderId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(paid.isSuccess
+            ? "Order paid ✓"
+            : (paid.errorCode == "WALLET_INSUFFICIENT_FUNDS"
+                ? "Not enough wallet balance"
+                : (paid.errorCode ?? "Payment failed")))));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text("Shop")),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _businessIdController,
+                    decoration: const InputDecoration(
+                        labelText: "Business id"),
+                    maxLength: 64,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _loading ? null : _browse,
+                  icon: const Icon(Icons.storefront_outlined),
+                  label: const Text("Browse"),
+                ),
+              ],
+            ),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Text(_error!,
+                  style: TextStyle(color: theme.colorScheme.error)),
+            ),
+          Expanded(
+            child: _loading
+                ? const StateViews.loading()
+                : _businessId == null
+                    ? const StateViews.empty(
+                        "Enter a business id to browse its catalog")
+                    : _products.isEmpty
+                        ? const StateViews.empty("No products available")
+                        : RefreshIndicator(
+                            onRefresh: _browse,
+                            child: ListView(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              children: [
+                                for (final p in _products)
+                                  Card(
+                                    margin:
+                                        const EdgeInsets.only(bottom: 8),
+                                    child: ListTile(
+                                      leading: const Icon(
+                                          Icons.inventory_2_outlined),
+                                      title: Text("${p["name"] ?? "Product"}"),
+                                      subtitle: Text(
+                                          "₦ ${((p["priceMinor"] as num? ?? 0) / 100).toStringAsFixed(2)}"),
+                                      trailing: FilledButton.tonal(
+                                        onPressed: () => _orderAndPay(p),
+                                        child: const Text("Buy"),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Support / report screen (support-reporting surface): contacts support,

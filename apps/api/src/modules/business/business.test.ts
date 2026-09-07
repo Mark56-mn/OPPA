@@ -37,6 +37,15 @@ function repo(overrides: Partial<PostgresBusinessRepository> = {}): PostgresBusi
     },
     async listOrdersForCustomer(customerUserId) { return [order({ customerUserId })]; },
     async payOrder(orderId, customerUserId) { return order({ id: orderId, customerUserId, status: "paid" }); },
+    async fulfillOrder(orderId, actorUserId) {
+      if (actorUserId !== "u-owner") throw new Error("BUSINESS_PERMISSION_DENIED");
+      return order({ id: orderId, status: "fulfilled" });
+    },
+    async cancelOrder(orderId, customerUserId) {
+      if (customerUserId !== "u-customer") throw new Error("BUSINESS_ORDER_NOT_FOUND");
+      if (orderId === "o-paid") throw new Error("BUSINESS_ORDER_STATE_INVALID");
+      return order({ id: orderId, customerUserId, status: "cancelled" });
+    },
     async analytics(businessId, actorUserId) {
       if (actorUserId !== "u-owner") throw new Error("BUSINESS_PERMISSION_DENIED");
       return { ordersTotal: 3, ordersPaid: 2, revenueMinor: 21000 };
@@ -148,5 +157,50 @@ test("business creation validates the name", async () => {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Kiosk" })
     });
     assert.equal(ok.status, 201);
+  } finally { await srv.close(); }
+});
+
+test("only business staff can fulfill an order; customers are denied", async () => {
+  const app = appFor({ userId: "u-customer" }, repo());
+  const srv = await listen(app);
+  try {
+    const denied = await fetch(`${srv.url}/business/orders/o1/fulfill`, { method: "POST" });
+    assert.equal(denied.status, 403);
+    const body = await denied.json() as { error: string };
+    assert.equal(body.error, "BUSINESS_PERMISSION_DENIED");
+  } finally { await srv.close(); }
+
+  const staffApp = appFor({ userId: "u-owner" }, repo());
+  const staffSrv = await listen(staffApp);
+  try {
+    const ok = await fetch(`${staffSrv.url}/business/orders/o1/fulfill`, { method: "POST" });
+    assert.equal(ok.status, 200);
+    const body = await ok.json() as { status: string };
+    assert.equal(body.status, "fulfilled");
+  } finally { await staffSrv.close(); }
+});
+
+test("cancellation is customer-only and rejects already-paid orders", async () => {
+  // A different user cannot cancel someone else's order.
+  const stranger = appFor({ userId: "u-other" }, repo());
+  const strangerSrv = await listen(stranger);
+  try {
+    const notYours = await fetch(`${strangerSrv.url}/business/orders/o1/cancel`, { method: "POST" });
+    assert.equal(notYours.status, 404); // ownership failure surfaces as not-found
+  } finally { await strangerSrv.close(); }
+
+  // The customer can cancel a pending order.
+  const app = appFor({ userId: "u-customer" }, repo());
+  const srv = await listen(app);
+  try {
+    const ok = await fetch(`${srv.url}/business/orders/o1/cancel`, { method: "POST" });
+    assert.equal(ok.status, 200);
+    const body = await ok.json() as { status: string };
+    assert.equal(body.status, "cancelled");
+    // A paid order must never be cancelled (money already moved; refunds are out of scope).
+    const paid = await fetch(`${srv.url}/business/orders/o-paid/cancel`, { method: "POST" });
+    assert.equal(paid.status, 409);
+    const paidBody = await paid.json() as { error: string };
+    assert.equal(paidBody.error, "BUSINESS_ORDER_STATE_INVALID");
   } finally { await srv.close(); }
 });
