@@ -4,9 +4,23 @@
 Durable resume state for autonomous Codex sessions. The next agent must read this file together with `OPPA_MASTER_BUILD_SPEC.md`, `CODEX_AUTOPILOT.md`, `CODEX_BUILD_MAP.md` and the active task file.
 
 ## LAST UPDATED
-2026-09-07 — Stage R (`CODEX_V1_RELEASE_CANDIDATE_TASK.md`) executed: Flutter SDK verification completed for real, all implementation commits pushed to GitHub, route-level webhook attack suite + connected product journey added and passing.
+2026-09-07 (session 2) — V1 product-gap closure session: order fulfillment + cancellation shipped end-to-end (API + tests), consumer Shop checkout and a real incoming/outgoing call screen added to the Flutter app; all commits pushed to GitHub (`17c21c4`).
 
-## STAGE R SESSION SUMMARY
+Previous: 2026-09-07 — Stage R (`CODEX_V1_RELEASE_CANDIDATE_TASK.md`) executed: Flutter SDK verification completed for real, all implementation commits pushed to GitHub, route-level webhook attack suite + connected product journey added and passing.
+
+## SESSION 2 SUMMARY (2026-09-07, product-gap closure)
+- date: 2026-09-07
+- starting commit: `3f94167` (Stage R handoff docs)
+- ending commit: `17c21c4`
+- Baseline re-verified first: API 117 pass / 5 skip / 0 fail, `tsc --noEmit` PASS, Flutter analyze 0 issues, Flutter 7/7 tests, cross-runtime crypto contract PASS (`node scripts/verify-device-key-contract.js`).
+- Real gaps found by inspection (not docs) and CLOSED:
+  1. **Order lifecycle was stuck at `paid`.** `OrderStatus` includes `fulfilled`, analytics counted it, the DB check constraint allows it — but no code path ever produced it. Added `POST /v1/business/orders/:orderId/fulfill` (any staff of the business; transactional, row-locked, role re-checked INSIDE the transaction, idempotent on already-fulfilled, rejects pending/ended states, audited, notifies the customer via outbox) and `POST /v1/business/orders/:orderId/cancel` (owning customer only, pending only — paid orders can never be cancelled because refunds are deliberately out of scope and cancellation must never move money).
+  2. **Consumer checkout was repository-only.** `placeOrder/payOrder` existed in the mobile `BusinessRepository` but no screen used them. Added the Shop flow in Connect (browse a business id → product list with prices → confirm → `placeOrder` with a unique `customerOrderReference` → `payOrder` from wallet; honest error surface incl. `WALLET_INSUFFICIENT_FUNDS`; amounts are always server-derived).
+  3. **Calls could be started but never answered.** The chat thread only showed "Calling…". Added `CallScreen` (lib/ui/screens/call_screen.dart): caller + callee phases (ringing/connecting/active/ended), 2s offset event polling with a `sinceSeq` cursor (reconnect-safe), answer/decline(+busy)/hangup against the real endpoints, invite-based incoming-call pickup when opening a conversation (`/calls` history + invite event), cancel for the ringing caller, best-effort hangup on dispose backed by the server's 2-minute ring timeout.
+- Tests added: API route attacks (staff-only fulfill 403 vs 200; stranger cancel 404; paid-order cancel 409 `BUSINESS_ORDER_STATE_INVALID`) and 2 Flutter widget tests driving `CallScreen` against a scripted double that mirrors the real API response shapes (callee answer→Connected→End; caller ringing→Cancel).
+- Updated handoff note: the earlier "mobile Business tab is a shell" entry was STALE — onboarding/products/orders/analytics UI already existed; only fulfillment + consumer checkout were missing.
+
+## STAGE R SESSION SUMMARY (2026-09-07)
 - date: 2026-09-07
 - starting commit: `e00f358` (docs: add V1 release candidate integration task)
 - ending commit: `8bd2ca1`
@@ -70,21 +84,21 @@ Durable resume state for autonomous Codex sessions. The next agent must read thi
 - `7e4d121` feat: Flutter mobile app, web/trust surface and migration runner
 - (prior) `854c9a6` fix: close adversarial audit findings in wallet, business, notifications and security core
 
-## VERIFIED
-- tests: PASS — 117 pass / 5 skip / 0 fail (`bun test src` in apps/api; the 5 skips are Postgres integration tests requiring `DATABASE_URL`). New: 11 webhook attack tests + 1 connected journey test.
-- typecheck: PASS — `bun run api:typecheck` (tsc --noEmit, strict)
+## VERIFIED (session 2, 2026-09-07)
+- tests: PASS — 119 pass / 5 skip / 0 fail (`bun test src` in apps/api; the 5 skips are Postgres integration tests requiring `DATABASE_URL`).
+- typecheck: PASS — `tsc --noEmit` (strict)
 - build: PASS — `bun run build` emits dist/server.js (dist removed after verification)
-- flutter analyze: PASS — `No issues found!` (real SDK 3.35.3, run 2026-09-07)
-- flutter test: PASS — 7/7 (`test/offline_queue_test.dart` 4 + `test/crypto_contract_test.dart` 3)
+- flutter analyze: PASS — `No issues found!` (real SDK, run 2026-09-07 session 2)
+- flutter test: PASS — 9/9 (`offline_queue` 4 + `crypto_contract` 3 + `call_screen` 2)
 - cross-runtime crypto contract: PASS — `node scripts/verify-device-key-contract.js`
-- lint/static: scans clean (no TODO/FIXME/stub/501; no WhatsApp; no secrets; no mock-success responses; no client-trusted authorization)
-- Stage R release checks: PASS — no provider secrets bundled, no debug backdoors, admin surfaces metadata-only, V1 scope intact
-- migrations: NOT APPLIED — no `DATABASE_URL` in this environment; static review of 0001–0018 done; runner shipped and fails fast
+- lint/static: scans clean (no TODO/FIXME/stub/501; no WhatsApp feature code; no secrets; no mock-success responses)
+- migrations: NOT APPLIED — no `DATABASE_URL` in this environment (re-checked this session); runner shipped and fails fast
 - integration: BLOCKED — no `DATABASE_URL`; migration application + 5 integration tests NOT RUN (never claimed passed)
-- Android build / real device: BLOCKED — no Android SDK or device in this environment (flutter doctor: Unable to locate Android SDK); never claimed passed
+- Android build / real device: BLOCKED — no Android SDK or device in this environment; never claimed passed
 
 ## PARTIALLY COMPLETED
-- Mobile Business tab is a coherent shell (reads connectivity, honest empty state); full merchant UI flows (store onboarding screens) were deferred to keep the session within scope — the backend business vertical slice is complete from the prior sprint.
+- (closed this session) Mobile merchant UI is complete for V1; consumer Shop checkout and call lifecycle added this session.
+- Call media remains WebRTC client-to-client per the documented assumption: the screen drives lifecycle + `signal` relay; a real-device WebRTC integration (mic/camera permissions, TURN) is required before claiming live audio/video works.
 
 ## NOT DONE
 - Real-device call media validation (WebRTC client-to-client path) requires two physical/virtual devices with cameras/mics — signaling layer complete and tested server-side; media is standard WebRTC per documented assumptions.
@@ -97,7 +111,7 @@ Durable resume state for autonomous Codex sessions. The next agent must read thi
 - Call signaling relies on client polling cadence; clients must back off on errors (documented in calls-routes/calls-service) to avoid battery/network waste.
 - Stage R webhook attack suite and journey test use stateful in-memory fakes that mirror the Postgres predicates 1:1 (row locks, consume-once, provider-scoped lookups); real-Postgres confirmation remains gated on `DATABASE_URL`.
 
-## NEXT EXACT TASK
+## NEXT EXACT TASK (unchanged, still the only path to a verified release)
 1. On an environment with `DATABASE_URL`: `cd apps/api && bun run migrate` (applies 0001–0018) then `bun test src` (runs the 5 integration tests + all attack/journey tests against real persistence). Record results.
 2. On a machine with the Android SDK: `cd apps/mobile && flutter build apk --release`, install on a device, and run the Stage R real-device acceptance list in `CODEX_V1_RELEASE_CANDIDATE_TASK.md` §5.
 3. Optionally add FCM push transport behind the existing notification outbox (delivery adapter pattern is in place).
@@ -106,7 +120,7 @@ Durable resume state for autonomous Codex sessions. The next agent must read thi
 - Provide `DATABASE_URL` (and auth/session/payment secrets) in the verification environment.
 - Build/sign the Android APK in a Flutter+Android-SDK environment for store distribution and run the real-device acceptance list.
 
-## V1 EXECUTION ORDER — STATE
+## V1 EXECUTION ORDER — STATE (updated session 2)
 1. Auth/Identity closure — DONE (login risk gate closed)
 2. Device/Session closure — DONE
 3. Messaging — DONE (receipts, groups, idempotency; realtime transport remains REST+polling by design)
@@ -116,9 +130,9 @@ Durable resume state for autonomous Codex sessions. The next agent must read thi
 7. Risk/Abuse — DONE (login gating wired; reports surface added)
 8. Notifications — DONE (durable outbox + reaper)
 9. Admin/Control Center — DONE
-10. Business/Merchant — DONE (self-order blocker at creation AND settlement)
-11. OPPA-native Calls — DONE (signaling + lifecycle + abuse controls)
-12. Flutter mobile — DONE at source level, SDK-VERIFIED (analyze 0 findings, 7/7 tests; Android build BLOCKED — no SDK/device)
+10. Business/Merchant — DONE (self-order blocker at creation AND settlement; fulfillment + cancellation now complete)
+11. OPPA-native Calls — DONE (signaling + lifecycle + abuse controls + mobile call UI)
+12. Flutter mobile — DONE at source level, SDK-VERIFIED (analyze 0 findings, 9/9 tests incl. call lifecycle; Android build BLOCKED — no SDK/device)
 13. Web/Admin/Trust — DONE (static surface + in-app support)
 14. Operations + Launch QA — DONE to the extent verifiable without live DB/device
 15. **Stage R — release candidate: executed** (crypto contract proven cross-runtime; webhook attacks + connected journey passing; DB/device verification BLOCKED, see NOT DONE)
