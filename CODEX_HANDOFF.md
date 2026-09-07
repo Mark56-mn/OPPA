@@ -4,7 +4,16 @@
 Durable resume state for autonomous Codex sessions. The next agent must read this file together with `OPPA_MASTER_BUILD_SPEC.md`, `CODEX_AUTOPILOT.md`, `CODEX_BUILD_MAP.md` and the active task file.
 
 ## LAST UPDATED
-2026-09-05 — Full V1 completion sprint executed (Stages A–Q of `CODEX_COMPLETE_APPLICATION_TASK.md`).
+2026-09-07 — Stage R (`CODEX_V1_RELEASE_CANDIDATE_TASK.md`) executed: Flutter SDK verification completed for real, all implementation commits pushed to GitHub, route-level webhook attack suite + connected product journey added and passing.
+
+## STAGE R SESSION SUMMARY
+- date: 2026-09-07
+- starting commit: `e00f358` (docs: add V1 release candidate integration task)
+- ending commit: `8bd2ca1`
+- GitHub gap closed: the implementation commits (`8f935ae` audit fixes, `1cd56f9` calls, `d68969b` Flutter+web, `ebae1c0` docs) existed only locally and were never pushed — this is why the repo appeared docs-only after `6dd9730`. They are now on origin.
+- **Flutter SDK verification actually executed** (SDK found at `/tmp/flutter`): `flutter analyze` = No issues found; `flutter test` = 7/7 pass, including the new `test/crypto_contract_test.dart` asserting the SPKI DER OIDs byte-for-byte (pointycastle's OID *decoder* drops continuation bits — 840→72, 10045→61 — so raw-DER assertions are required; the Dart *encoder* is correct) and verifying a real ECDSA P-256 step-up signature over `${challenge}.${canonicalIntent}`.
+- Cross-runtime proof: `scripts/verify-device-key-contract.js` verifies the mobile signature encoding with the backend's own primitive (`createVerify("SHA256")` + server OIDs) — PASS.
+- Stage R attack tests added: `apps/api/src/modules/payments/payment-webhook-routes.test.ts` (11 route-level attacks on the only unauthenticated surface) and `apps/api/src/journey-v1.test.ts` (connected journey with real services).
 
 ## CURRENT BASELINE
 - Starting commit of sprint session: `75e1e0f` (docs: handoff full autonomous V1 completion sprint), rebased onto `854c9a6` (audit fixes).
@@ -62,13 +71,17 @@ Durable resume state for autonomous Codex sessions. The next agent must read thi
 - (prior) `854c9a6` fix: close adversarial audit findings in wallet, business, notifications and security core
 
 ## VERIFIED
-- tests: PASS — 105 pass / 5 skip / 0 fail (`bun test src` in apps/api; skips are Postgres integration tests requiring `DATABASE_URL`)
+- tests: PASS — 117 pass / 5 skip / 0 fail (`bun test src` in apps/api; the 5 skips are Postgres integration tests requiring `DATABASE_URL`). New: 11 webhook attack tests + 1 connected journey test.
 - typecheck: PASS — `bun run api:typecheck` (tsc --noEmit, strict)
 - build: PASS — `bun run build` emits dist/server.js (dist removed after verification)
-- lint/static: scans clean (no TODO/FIXME/stub/501; no WhatsApp; no secrets; no client-trusted authorization)
+- flutter analyze: PASS — `No issues found!` (real SDK 3.35.3, run 2026-09-07)
+- flutter test: PASS — 7/7 (`test/offline_queue_test.dart` 4 + `test/crypto_contract_test.dart` 3)
+- cross-runtime crypto contract: PASS — `node scripts/verify-device-key-contract.js`
+- lint/static: scans clean (no TODO/FIXME/stub/501; no WhatsApp; no secrets; no mock-success responses; no client-trusted authorization)
+- Stage R release checks: PASS — no provider secrets bundled, no debug backdoors, admin surfaces metadata-only, V1 scope intact
 - migrations: NOT APPLIED — no `DATABASE_URL` in this environment; static review of 0001–0018 done; runner shipped and fails fast
 - integration: BLOCKED — no `DATABASE_URL`; migration application + 5 integration tests NOT RUN (never claimed passed)
-- flutter analyze / flutter test / Android build: NOT RUN — Flutter SDK unavailable in the implementation environment (recorded in apps/mobile/README.md); Dart source written to pass analysis (manual review; SDK verification pending)
+- Android build / real device: BLOCKED — no Android SDK or device in this environment (flutter doctor: Unable to locate Android SDK); never claimed passed
 
 ## PARTIALLY COMPLETED
 - Mobile Business tab is a coherent shell (reads connectivity, honest empty state); full merchant UI flows (store onboarding screens) were deferred to keep the session within scope — the backend business vertical slice is complete from the prior sprint.
@@ -80,35 +93,35 @@ Durable resume state for autonomous Codex sessions. The next agent must read thi
 - RLS policy hardening beyond `enable row level security` — access model is privileged-backend; documented, not changed.
 
 ## KNOWN FAILURES/RISKS
-- Flutter source compiles by inspection, not by analyzer: run `flutter analyze && flutter test` on an SDK machine before release (risk: minor null-safety/type fixes may be needed; no logic is speculative — contracts were verified against router sources).
 - Without `DATABASE_URL`, nothing here proves runtime behavior against Postgres; apply migrations and run the 5 integration tests first in any verified environment.
 - Call signaling relies on client polling cadence; clients must back off on errors (documented in calls-routes/calls-service) to avoid battery/network waste.
-- `package-lock.json` at repo root is untracked (repo uses `bun.lock`); delete or ignore it deliberately.
+- Stage R webhook attack suite and journey test use stateful in-memory fakes that mirror the Postgres predicates 1:1 (row locks, consume-once, provider-scoped lookups); real-Postgres confirmation remains gated on `DATABASE_URL`.
 
 ## NEXT EXACT TASK
-1. On an environment with `DATABASE_URL`: `cd apps/api && bun run migrate` (applies 0001–0018) then `bun test src` (runs the 5 integration tests). Record results.
-2. On a machine with the Flutter SDK: `cd apps/mobile && flutter pub get && flutter analyze && flutter test`, fix any analyzer findings, and run the app against a locally running API (`flutter run --dart-define=OPPA_API_URL=http://10.0.2.2:8080`) to verify the end-to-end journey.
+1. On an environment with `DATABASE_URL`: `cd apps/api && bun run migrate` (applies 0001–0018) then `bun test src` (runs the 5 integration tests + all attack/journey tests against real persistence). Record results.
+2. On a machine with the Android SDK: `cd apps/mobile && flutter build apk --release`, install on a device, and run the Stage R real-device acceptance list in `CODEX_V1_RELEASE_CANDIDATE_TASK.md` §5.
 3. Optionally add FCM push transport behind the existing notification outbox (delivery adapter pattern is in place).
 
 ## MANUAL OWNER ACTION
 - Provide `DATABASE_URL` (and auth/session/payment secrets) in the verification environment.
-- Build/sign the Android APK in a Flutter-enabled environment for store distribution.
+- Build/sign the Android APK in a Flutter+Android-SDK environment for store distribution and run the real-device acceptance list.
 
 ## V1 EXECUTION ORDER — STATE
-1. Auth/Identity closure — DONE (login risk gate closed this sprint)
+1. Auth/Identity closure — DONE (login risk gate closed)
 2. Device/Session closure — DONE
 3. Messaging — DONE (receipts, groups, idempotency; realtime transport remains REST+polling by design)
-4. Wallet — DONE (audit-hardened)
-5. Payments — DONE (refunds deliberately out of scope, documented)
+4. Wallet — DONE (audit-hardened; Stage R journey test added)
+5. Payments — DONE (refunds deliberately out of scope, documented; Stage R webhook attack suite added)
 6. Security Core — DONE (audit)
-7. Risk/Abuse — DONE (login gating now wired; reports surface added)
+7. Risk/Abuse — DONE (login gating wired; reports surface added)
 8. Notifications — DONE (durable outbox + reaper)
 9. Admin/Control Center — DONE
 10. Business/Merchant — DONE (self-order blocker at creation AND settlement)
 11. OPPA-native Calls — DONE (signaling + lifecycle + abuse controls)
-12. Flutter mobile — SOURCE COMPLETE (SDK verification pending, see NOT DONE)
+12. Flutter mobile — DONE at source level, SDK-VERIFIED (analyze 0 findings, 7/7 tests; Android build BLOCKED — no SDK/device)
 13. Web/Admin/Trust — DONE (static surface + in-app support)
-14. Operations + Launch QA — DONE to the extent verifiable without live DB/SDK
+14. Operations + Launch QA — DONE to the extent verifiable without live DB/device
+15. **Stage R — release candidate: executed** (crypto contract proven cross-runtime; webhook attacks + connected journey passing; DB/device verification BLOCKED, see NOT DONE)
 
 WhatsApp is not in this V1 order (V2 only).
 
