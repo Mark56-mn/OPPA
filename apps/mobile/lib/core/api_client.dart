@@ -113,8 +113,9 @@ class ApiClient {
             ..body = body == null ? "" : jsonEncode(body))
           .timeout(timeout);
       dynamic decoded;
-      var errorCode = response.headers["content-type"].toString().contains("json");
-      if (errorCode) {
+      final isJson = response.headers["content-type"].toString().contains("json");
+      var errorCode = "";
+      if (isJson) {
         try {
           decoded = jsonDecode(await response.stream.bytesToString());
         } catch (_) {

@@ -37,6 +37,7 @@ class _OppaAppState extends State<OppaApp> {
   late final WalletRepository wallet;
   late final CallsRepository calls;
   late final NotificationsRepository notifications;
+  late final BusinessRepository business;
   OppaThemeId themeId = OppaThemeId.fluidAfrica;
   StreamSubscription<ConnectState>? _connectivitySub;
 
@@ -59,6 +60,7 @@ class _OppaAppState extends State<OppaApp> {
     wallet = WalletRepository(api);
     calls = CallsRepository(api);
     notifications = NotificationsRepository(api);
+    business = BusinessRepository(api);
 
     ScreenDataSource.setCacheWriter((key, value) async {
       await widget.prefs?.setString("cache.$key", value);
@@ -100,6 +102,7 @@ class _OppaAppState extends State<OppaApp> {
               wallet: wallet,
               calls: calls,
               notifications: notifications,
+              business: business,
               themeId: themeId,
               onThemeChanged: _setTheme,
               onSignOut: () async {

@@ -13,6 +13,8 @@ class HomeScreen extends StatefulWidget {
     required this.session,
     required this.wallet,
     required this.notifications,
+    required this.contacts,
+    required this.conversations,
     required this.connectivity,
     required this.onOpenNotifications,
     required this.onOpenSupport,
@@ -21,6 +23,8 @@ class HomeScreen extends StatefulWidget {
   final SessionStore session;
   final WalletRepository wallet;
   final NotificationsRepository notifications;
+  final ContactsRepository contacts;
+  final ConversationsRepository conversations;
   final ConnectivityService connectivity;
   final VoidCallback onOpenNotifications;
   final VoidCallback onOpenSupport;
@@ -32,6 +36,12 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   ViewState _walletState = const ViewLoading();
   ViewState _notificationsState = const ViewLoading();
+
+  void _openConnect() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ConnectScreen(
+            contacts: widget.contacts, conversations: widget.conversations)));
+  }
 
   @override
   void initState() {
@@ -103,7 +113,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton.tonalIcon(
-                    onPressed: () {}, // Connect flow lives in ConnectScreen
+                    onPressed: _openConnect,
                     icon: const Icon(Icons.person_add_alt_outlined),
                     label: const Text("Connect"),
                   ),
@@ -197,6 +207,208 @@ class _NotificationPreview extends StatelessWidget {
       _ => const SizedBox.shrink(),
     };
   }
+}
+
+/// Connect: find people by user id, add contacts, and manage them
+/// (start chat, block, report). Server enforces all authorization.
+class ConnectScreen extends StatefulWidget {
+  const ConnectScreen({
+    super.key,
+    required this.contacts,
+    required this.conversations,
+  });
+
+  final ContactsRepository contacts;
+  final ConversationsRepository conversations;
+
+  @override
+  State<ConnectScreen> createState() => _ConnectScreenState();
+}
+
+class _ConnectScreenState extends State<ConnectScreen> {
+  final _addController = TextEditingController();
+  List<Map> _contacts = const [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _addController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final r = await widget.contacts.list();
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      if (r.isSuccess) {
+        _contacts = (((r.body as Map?)?["contacts"] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList();
+      } else {
+        _error = r.errorCode ?? "Could not load contacts";
+      }
+    });
+  }
+
+  Future<void> _add() async {
+    final userId = _addController.text.trim();
+    if (userId.isEmpty) return;
+    final r = await widget.contacts.add(userId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.isSuccess
+            ? "Contact added"
+            : (r.errorCode ?? "Could not add contact"))));
+    if (r.isSuccess) {
+      _addController.clear();
+      _load();
+    }
+  }
+
+  Future<void> _block(String userId) async {
+    final r = await widget.contacts.block(userId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.isSuccess
+            ? "User blocked"
+            : (r.errorCode ?? "Could not block"))));
+  }
+
+  Future<void> _report(String userId) async {
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        final controller = TextEditingController();
+        return AlertDialog(
+          title: const Text("Report user"),
+          content: TextField(
+            controller: controller,
+            maxLength: 500,
+            maxLines: 3,
+            decoration: const InputDecoration(
+                labelText: "What happened?"),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel")),
+            FilledButton(
+                onPressed: () {
+                  if (controller.text.trim().isEmpty) return;
+                  Navigator.pop(context, controller.text.trim());
+                },
+                child: const Text("Report")),
+          ],
+        );
+      },
+    );
+    if (reason == null) return;
+    final r = await widget.contacts.report(userId, reason);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.isSuccess
+            ? "Report sent — our safety team will review"
+            : (r.errorCode ?? "Could not send report"))));
+  }
+
+  Future<void> _startChat(String userId) async {
+    final r = await widget.conversations.createDirect(userId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.isSuccess
+            ? "Chat ready — find it under Chats"
+            : (r.errorCode ?? "Could not start chat"))));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Connect")),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _addController,
+                    decoration: const InputDecoration(
+                        labelText: "Add by user id"),
+                    maxLength: 128,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _add,
+                  icon: const Icon(Icons.person_add_alt_outlined),
+                  label: const Text("Add"),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: _loading
+                ? const StateViews.loading()
+                : _error != null
+                    ? StateViews.error(_error!, onRetry: _load)
+                    : _contacts.isEmpty
+                        ? const StateViews.empty(
+                            "No contacts yet — add someone by their user id")
+                        : RefreshIndicator(
+                            onRefresh: _load,
+                            child: ListView(
+                              padding: const EdgeInsets.symmetric(horizontal: 16),
+                              children: [
+                                for (final c in _contacts)
+                                  ListTile(
+                                    leading: CircleAvatar(
+                                        child: Text(_initial(
+                                            "${c["displayName"] ?? c["userId"] ?? "?"}"))),
+                                    title: Text(
+                                        "${c["displayName"] ?? c["userId"] ?? "Unknown"}"),
+                                    trailing: PopupMenuButton<String>(
+                                      onSelected: (action) {
+                                        final id = "${c["userId"] ?? ""}";
+                                        if (action == "chat") _startChat(id);
+                                        if (action == "block") _block(id);
+                                        if (action == "report") _report(id);
+                                      },
+                                      itemBuilder: (_) => const [
+                                        PopupMenuItem(
+                                            value: "chat", child: Text("Start chat")),
+                                        PopupMenuItem(
+                                            value: "block", child: Text("Block")),
+                                        PopupMenuItem(
+                                            value: "report",
+                                            child: Text("Report")),
+                                      ],
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _initial(String s) =>
+      s.isEmpty ? "?" : s.characters.first.toUpperCase();
 }
 
 /// Support / report screen (support-reporting surface): contacts support,

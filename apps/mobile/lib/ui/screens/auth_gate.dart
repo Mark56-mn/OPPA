@@ -3,7 +3,6 @@ import "package:flutter/material.dart";
 import "../../core/device_key_manager.dart";
 import "../../core/session_store.dart";
 import "../../design/oppa_themes.dart";
-import "../widgets/common.dart";
 
 /// Real auth journey: phone → OTP → session. Device id is generated once and
 /// kept in secure storage; the server binds sessions to it.

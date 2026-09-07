@@ -77,8 +77,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
           leading: CircleAvatar(
             child: Text(_initial(c["title"] as String? ?? c["id"] as String? ?? "?")),
           ),
-          title: Text("${c["title"] ?? "Direct chat"}"),
-          subtitle: Text("${c["kind"] == "group" ? "Group" : "Direct"}"),
+          title: Text(c["title"] as String? ?? "Direct chat"),
+          subtitle: Text(c["kind"] == "group" ? "Group" : "Direct"),
           trailing: ((c["unread"] as num?)?.toInt() ?? 0) > 0
               ? Badge(label: Text("${c["unread"]}"))
               : null,

@@ -5,7 +5,7 @@ import "../core/outbound_queue.dart";
 import "../core/session_store.dart";
 import "../data/repositories.dart";
 import "../design/oppa_themes.dart";
-import "screens/auth_gate.dart";
+import "widgets/common.dart";
 import "screens/chat_screens.dart";
 import "screens/home_screens.dart";
 import "screens/me_screens.dart";
@@ -29,6 +29,7 @@ class HomeShell extends StatelessWidget {
     required this.wallet,
     required this.calls,
     required this.notifications,
+    required this.business,
     required this.themeId,
     required this.onThemeChanged,
     required this.onSignOut,
@@ -44,6 +45,7 @@ class HomeShell extends StatelessWidget {
   final WalletRepository wallet;
   final CallsRepository calls;
   final NotificationsRepository notifications;
+  final BusinessRepository business;
   final OppaThemeId themeId;
   final void Function(OppaThemeId) onThemeChanged;
   final Future<void> Function() onSignOut;
@@ -74,6 +76,8 @@ class HomeShell extends StatelessWidget {
                         session: session,
                         wallet: wallet,
                         notifications: notifications,
+                        contacts: contacts,
+                        conversations: conversations,
                         connectivity: connectivity,
                         onOpenNotifications: () {},
                         onOpenSupport: () => Navigator.of(context).push(
@@ -94,7 +98,8 @@ class HomeShell extends StatelessWidget {
                           wallet: wallet,
                           session: session,
                           connectivity: connectivity),
-                      BusinessScreen(connectivity: connectivity),
+                      BusinessScreen(
+                          business: business, connectivity: connectivity),
                       MeScreen(
                           session: session,
                           profiles: profiles,

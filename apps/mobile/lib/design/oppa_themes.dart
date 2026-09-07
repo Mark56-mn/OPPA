@@ -114,7 +114,7 @@ ThemeData buildOppaTheme(OppaTokens t, {Brightness brightness = Brightness.dark}
       fillColor: t.surface,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
-        borderSide: BorderSide(color: t.onSurface.withOpacity(0.2)),
+        borderSide: BorderSide(color: t.onSurface.withValues(alpha: 0.2)),
       ),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
     ),

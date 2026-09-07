@@ -220,7 +220,7 @@ class _BalanceCard extends StatelessWidget {
               Text("Wallet unavailable offline"),
             ]),
           ViewError(:final message) => Column(children: [
-              Text("$message"),
+              Text(message),
               const SizedBox(height: 8),
               FilledButton(onPressed: onRetry, child: const Text("Retry")),
             ]),

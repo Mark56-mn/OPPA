@@ -5,3 +5,9 @@ dist/
 !.env.example
 coverage/
 .DS_Store
+package-lock.json
+
+# Flutter / Dart build artifacts
+apps/mobile/.dart_tool/
+apps/mobile/build/
+apps/mobile/.flutter-plugins-dependencies

@@ -161,6 +161,39 @@ class WalletRepository {
       _api.get("/payments/history", query: {"limit": "$limit", "offset": "$offset"});
 }
 
+/// Business (merchant surface): stores, products, orders and analytics.
+/// Consumer order placement + wallet payment live on the same repository;
+/// the server enforces the self-ordering blocker regardless of client.
+class BusinessRepository {
+  BusinessRepository(this._api);
+  final ApiClient _api;
+
+  Future<ApiResponse> listMine() => _api.get("/business");
+  Future<ApiResponse> create({required String name, String? description}) =>
+      _api.post("/business", body: {"name": name, if (description != null) "description": description});
+  Future<ApiResponse> listProducts(String businessId) =>
+      _api.get("/business/$businessId/products");
+  Future<ApiResponse> createProduct(String businessId,
+          {required String name, required int priceMinor, String? description}) =>
+      _api.post("/business/$businessId/products",
+          body: {"name": name, "priceMinor": priceMinor, if (description != null) "description": description});
+  Future<ApiResponse> listOrders(String businessId, {int limit = 50}) =>
+      _api.get("/business/$businessId/orders", query: {"limit": "$limit"});
+  Future<ApiResponse> analytics(String businessId) =>
+      _api.get("/business/$businessId/analytics");
+
+  /// Customer side (Connect tab): browse another business's products, order
+  /// and pay from the wallet. Never used for one's own business (server blocks).
+  Future<ApiResponse> placeOrder(String businessId,
+          {required List<Map<String, dynamic>> items, String? customerOrderReference}) =>
+      _api.post("/business/$businessId/orders",
+          body: {"items": items, if (customerOrderReference != null) "customerOrderReference": customerOrderReference});
+  Future<ApiResponse> myOrders({int limit = 50}) =>
+      _api.get("/business/orders/mine", query: {"limit": "$limit"});
+  Future<ApiResponse> payOrder(String orderId) =>
+      _api.post("/business/orders/$orderId/pay", body: {});
+}
+
 /// OPPA-native calls: start/answer/decline/hangup + event polling.
 class CallsRepository {
   CallsRepository(this._api);

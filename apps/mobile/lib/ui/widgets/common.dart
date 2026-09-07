@@ -37,23 +37,58 @@ class StatusBanner extends StatelessWidget {
   }
 }
 
-enum _StateKind { loading, empty, error }
-
 /// Standard loading / empty / error states for all screens.
-class StateViews extends StatelessWidget {
-  const StateViews.loading({super.key})
-      : _kind = _StateKind.loading,
-        message = "",
-        onRetry = null;
+sealed class StateViews extends StatelessWidget {
+  const StateViews({super.key});
 
-  const StateViews.empty(this.message, {super.key})
-      : _kind = _StateKind.empty,
-        onRetry = null;
+  const factory StateViews.loading({Key? key}) = _LoadingViews;
 
-  const StateViews.error(this.message, {super.key, this.onRetry})
-      : _kind = _StateKind.error;
+  const factory StateViews.empty(String message, {Key? key}) = _EmptyViews;
 
-  final _StateKind _kind;
+  const factory StateViews.error(String message,
+      {Key? key, VoidCallback? onRetry}) = _ErrorViews;
+}
+
+class _LoadingViews extends StateViews {
+  const _LoadingViews({super.key});
+
+  @override
+  Widget build(BuildContext context) =>
+      const Center(child: CircularProgressIndicator());
+}
+
+class _EmptyViews extends StateViews {
+  const _EmptyViews(this.message, {super.key});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.inbox_outlined,
+                size: 48,
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.4)),
+            const SizedBox(height: 16),
+            Text(message,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.7))),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ErrorViews extends StateViews {
+  const _ErrorViews(this.message, {super.key, this.onRetry});
+
   final String message;
   final VoidCallback? onRetry;
 
@@ -66,19 +101,13 @@ class StateViews extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (_kind == _StateKind.loading) const CircularProgressIndicator(),
-            if (_kind == _StateKind.empty)
-              Icon(Icons.inbox_outlined, size: 48,
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.4)),
-            if (_kind == _StateKind.error)
-              Icon(Icons.error_outline, size: 48, color: theme.colorScheme.error),
+            Icon(Icons.error_outline, size: 48, color: theme.colorScheme.error),
             const SizedBox(height: 16),
-            if (_kind != _StateKind.loading)
-              Text(message,
-                  textAlign: TextAlign.center,
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.7))),
-            if (_kind == _StateKind.error && onRetry != null) ...[
+            Text(message,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.7))),
+            if (onRetry != null) ...[
               const SizedBox(height: 16),
               FilledButton(onPressed: onRetry, child: const Text("Retry")),
             ],
