@@ -4,9 +4,33 @@
 Durable resume state for autonomous Codex sessions. The next agent must read this file together with `OPPA_MASTER_BUILD_SPEC.md`, `CODEX_AUTOPILOT.md`, `CODEX_BUILD_MAP.md` and the active task file.
 
 ## LAST UPDATED
-2026-09-07 (session 2) — V1 product-gap closure session: order fulfillment + cancellation shipped end-to-end (API + tests), consumer Shop checkout and a real incoming/outgoing call screen added to the Flutter app; all commits pushed to GitHub (`17c21c4`).
+2026-09-07 (session 3, `CODEX_FINAL_DB_FIRST_HARDENING_TASK.md`) — DB-first hardening executed to the maximum extent this environment permits. **Live-DB access is BLOCKED** (no `DATABASE_URL` in the sandbox; `freebuff-env`/`freebuff-deploy env list` empty; the Supabase db host resolves IPv6-only and raw v4 egress to it is unavailable). All repo-side deliverables shipped: migration `0019` (call invariant, cross-business FK, grants/RLS), real-Postgres concurrency tests, endpoint-aware retries, lossless offline queue, mobile fulfill/cancel UI, admin report triage. Committed and pushed.
 
-Previous: 2026-09-07 — Stage R (`CODEX_V1_RELEASE_CANDIDATE_TASK.md`) executed: Flutter SDK verification completed for real, all implementation commits pushed to GitHub, route-level webhook attack suite + connected product journey added and passing.
+Previous: 2026-09-07 (session 2) — V1 product-gap closure session: order fulfillment + cancellation shipped end-to-end (API + tests), consumer Shop checkout and a real incoming/outgoing call screen added to the Flutter app; all commits pushed to GitHub (`17c21c4`).
+
+## SESSION 3 SUMMARY (DB-first hardening)
+- date: 2026-09-07
+- starting commit: `98c16ac`
+- ending commit: (this commit)
+- **Live DB: NOT TOUCHED, NOT VERIFIED.** What was attempted and exactly what blocked it:
+  - `DATABASE_URL` absent from shell/process env (`bun -e` with the repo's own pool prints `DB_NULL`); direct env reads are blocked by the platform by design.
+  - `freebuff-env` CLI: no list/get verb; `freebuff-deploy env list` returns `{keys: []}`.
+  - No `.env` files exist in the repo or `apps/api` (only `.env.example`).
+  - Network: the sandbox has IPv6 HTTP egress but `db.bqsovaxbjvgkdnwphprx.supabase.co` has **no A record** (AAAA only); raw TCP from this environment to it is unreachable; regional poolers resolve but the project's pooler hostname has no A record either. Without the credential, connecting is impossible regardless.
+  - Consequence: migrations 0018/0019 are NOT applied to the live DB from here; the calls-tables drift and every DB verification step remain the OWNER's one-command action (below). Nothing was faked.
+- **Migration 0019 (`database/migrations/0019_db_hardening.sql`) written** (idempotent, requires 0018, transactional):
+  1. One non-terminal call per conversation: partial unique index `oppa_calls_one_live_per_conversation_uidx on oppa_calls(conversation_id) where status in ('ringing','active')` — DB-enforced, race-proof; warns instead of failing on pre-existing duplicates.
+  2. Cross-business order-item integrity: unique index on `products(id, business_id)` + composite FK `(product_id, order_id) → products(id, business_id)`; a data pre-check ABORTS the migration (transactional) if historical cross-business rows exist, so nothing is silently deleted or skipped.
+  3. Grants/default privileges: revokes any anon/authenticated grants on oppa_% tables/sequences; ALTER DEFAULT PRIVILEGES so future objects are not auto-exposed to the Data API roles; re-affirms RLS on every oppa_% table and `schema_migrations`; RLS stays deny-all (no policies) preserving the privileged-backend architecture — no fake auth.uid() policies.
+- **Real-Postgres regression tests** (`apps/api/src/db-hardening.test.ts`, run only with DATABASE_URL, self-cleaning): concurrent double startCall → exactly one wins, loser gets unique violation; ended call frees the slot; cross-business item insert → FK violation; same-business item still inserts; every oppa_% table has RLS on and zero policies. Currently skipped (8 skip) without env — never reported as passing.
+- **Endpoint-aware retries** (Flutter `api_client.dart`): `retrySafetyFor()` classifies every request; ambiguous network/timeout failures are retried ONLY for reads/deletes/puts/keyed POSTs (message sends via clientMessageId, order pay/fulfill/cancel single-transition endpoints, step-up challenge). `/payments/initialize`, `/wallet/transfer`, `/auth/*`, business/product creation are NEVER blindly retried. Bounded backoff+jitter preserved. 6 unit tests.
+- **Lossless offline queue** (`outbound_queue.dart`): explicit state model pending/retrying/blocked/failed. Full queue now THROWS instead of evicting the oldest message; 4xx keeps the op as blocked; exhausted retries keep it as failed; user `retry()`/`discard()` are the only paths in/out; failed state survives restart and never auto-flushes; financial kinds still rejected at enqueue. 4 new tests (9 total for the queue).
+- **Mobile order lifecycle completed**: `fulfillOrder`/`cancelOrder` in BusinessRepository; merchant Orders screen shows a Fulfill action on paid orders; Shop screen shows the customer's own orders with cancel-on-pending chips.
+- **Admin report triage** (found missing: reports were write-only): `GET /admin/reports` (status+limit validated) and `POST /admin/reports/:id/status` — fraud.review permission, reason shown is user-supplied evidence, never message content.
+- OTP honesty: repo scan confirms no bypass/master code/universal OTP exists and none was added; BulkSmsProvider fails closed without `BULKSMS_API_TOKEN`. OTP delivery remains **BLOCKED** on the missing provider credential.
+- Call media honesty: lifecycle/signaling is complete and tested; WebRTC offer/answer/ICE negotiation and real audio/video remain **NOT VERIFIED** (needs real device + permissions + TURN); signaling payloads bound by 32kb body cap and member checks; no SDP/ICE credential logging (payloads are stored, not logged).
+
+## STAGE R SESSION SUMMARY (2026-09-07)
 
 ## SESSION 2 SUMMARY (2026-09-07, product-gap closure)
 - date: 2026-09-07
@@ -84,21 +108,28 @@ Previous: 2026-09-07 — Stage R (`CODEX_V1_RELEASE_CANDIDATE_TASK.md`) executed
 - `7e4d121` feat: Flutter mobile app, web/trust surface and migration runner
 - (prior) `854c9a6` fix: close adversarial audit findings in wallet, business, notifications and security core
 
-## VERIFIED (session 2, 2026-09-07)
-- tests: PASS — 119 pass / 5 skip / 0 fail (`bun test src` in apps/api; the 5 skips are Postgres integration tests requiring `DATABASE_URL`).
+## VERIFIED (session 3, 2026-09-07)
+- tests: PASS — 120 pass / 8 skip / 0 fail (`bun test src` in apps/api; the 8 skips are Postgres integration tests incl. the 3 new DB-hardening tests, all requiring `DATABASE_URL`).
 - typecheck: PASS — `tsc --noEmit` (strict)
 - build: PASS — `bun run build` emits dist/server.js (dist removed after verification)
-- flutter analyze: PASS — `No issues found!` (real SDK, run 2026-09-07 session 2)
-- flutter test: PASS — 9/9 (`offline_queue` 4 + `crypto_contract` 3 + `call_screen` 2)
+- flutter analyze: PASS — `No issues found!`
+- flutter test: PASS — 19/19 (offline_queue 8, crypto_contract 3, call_screen 2, retry_policy 6)
 - cross-runtime crypto contract: PASS — `node scripts/verify-device-key-contract.js`
-- lint/static: scans clean (no TODO/FIXME/stub/501; no WhatsApp feature code; no secrets; no mock-success responses)
-- migrations: NOT APPLIED — no `DATABASE_URL` in this environment (re-checked this session); runner shipped and fails fast
-- integration: BLOCKED — no `DATABASE_URL`; migration application + 5 integration tests NOT RUN (never claimed passed)
-- Android build / real device: BLOCKED — no Android SDK or device in this environment; never claimed passed
+- lint/static: scans clean (no TODO/FIXME/stub/501; no OTP bypass; no secrets; no fake success paths)
+- migrations 0018+0019 on live DB: **NOT APPLIED / BLOCKED** — no `DATABASE_URL` in this environment (attempts documented in SESSION 3 SUMMARY); never claimed applied
+- integration (real Postgres): **BLOCKED** — 8 integration tests written and ready, not run
+- Android build / real device: **BLOCKED** — no Android SDK or device here
+- OTP delivery: **BLOCKED** — provider credential missing; no bypass exists or was added
+- Call media (real WebRTC audio/video): **NOT VERIFIED** — signaling/lifecycle tested server-side and in widget tests; media needs real devices
 
-## PARTIALLY COMPLETED
-- (closed this session) Mobile merchant UI is complete for V1; consumer Shop checkout and call lifecycle added this session.
-- Call media remains WebRTC client-to-client per the documented assumption: the screen drives lifecycle + `signal` relay; a real-device WebRTC integration (mic/camera permissions, TURN) is required before claiming live audio/video works.
+## NEXT EXACT TASK (owner actions, in order)
+1. Put the live Supabase `DATABASE_URL` into the verification environment (Settings → Environment / deploy env), then run exactly:
+   `cd apps/api && bun run migrate` (applies 0018 → fixes the missing oppa_calls/oppa_call_events drift → then 0019 adds the call invariant, cross-business FK and grants hardening; if any cross-business order rows exist it aborts with a count instead of corrupting anything)
+2. `cd apps/api && bun test src` — the 8 integration tests (5 security-core + 3 DB-hardening) run for real; record results.
+3. Re-run the Supabase advisor; the only acceptable findings are the intentional deny-all-RLS-with-no-policies posture and PostgREST exposure notes.
+4. Android: import `apps/mobile` into an Android-capable environment, `flutter build apk --release`, run the Stage R §5 acceptance list. OTP delivery needs `BULKSMS_API_TOKEN` (and OTP secrets) to be set, or OTP stays BLOCKED and post-auth flows need a test session.
+
+## PREVIOUS SESSION 2 NOTES (kept for context)
 
 ## NOT DONE
 - Real-device call media validation (WebRTC client-to-client path) requires two physical/virtual devices with cameras/mics — signaling layer complete and tested server-side; media is standard WebRTC per documented assumptions.
@@ -111,7 +142,7 @@ Previous: 2026-09-07 — Stage R (`CODEX_V1_RELEASE_CANDIDATE_TASK.md`) executed
 - Call signaling relies on client polling cadence; clients must back off on errors (documented in calls-routes/calls-service) to avoid battery/network waste.
 - Stage R webhook attack suite and journey test use stateful in-memory fakes that mirror the Postgres predicates 1:1 (row locks, consume-once, provider-scoped lookups); real-Postgres confirmation remains gated on `DATABASE_URL`.
 
-## NEXT EXACT TASK (unchanged, still the only path to a verified release)
+## NEXT EXACT TASK (session 2 — superseded by session 3's task list above)
 1. On an environment with `DATABASE_URL`: `cd apps/api && bun run migrate` (applies 0001–0018) then `bun test src` (runs the 5 integration tests + all attack/journey tests against real persistence). Record results.
 2. On a machine with the Android SDK: `cd apps/mobile && flutter build apk --release`, install on a device, and run the Stage R real-device acceptance list in `CODEX_V1_RELEASE_CANDIDATE_TASK.md` §5.
 3. Optionally add FCM push transport behind the existing notification outbox (delivery adapter pattern is in place).

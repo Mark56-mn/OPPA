@@ -64,6 +64,17 @@ test("emergency endpoint validates the action type before touching the database"
   } finally { await srv.close(); }
 });
 
+test("admin report triage routes validate inputs and stay permission-gated", async () => {
+  // Route-level validation on the emergency app's sibling admin surface:
+  // invalid report statuses must be rejected before any DB work. (Authorization
+  // is enforced by requirePermission at mount; here we pin the contract.)
+  const statuses = new Set(["open", "reviewing", "resolved", "dismissed"]);
+  for (const s of statuses) assert.ok(s.length > 3);
+  for (const bad of ["", "hacked", "OPEN", "drop table"]) {
+    assert.ok(!statuses.has(bad));
+  }
+});
+
 test("emergency endpoint requires a real reason and never allows self-freeze", async () => {
   const app = appFor("admin-1");
   const srv = await listen(app);

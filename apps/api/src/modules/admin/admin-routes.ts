@@ -59,5 +59,49 @@ export function createAdminRouter(risk?: PostgresRiskRepository) {
       res.status(201).json({ ok: true });
     } catch (e) { next(e); }
   });
+
+  // Abuse-report triage: operator listing of user reports. The report REASON
+  // is user-supplied evidence required for review; it is not message content
+  // and never includes chat bodies. Permission-gated like all admin reads.
+  r.get("/reports", requirePermission("fraud.review"), async (req: any, res, next) => {
+    try {
+      if (!db) throw Error("DATABASE_URL is not configured");
+      const status = typeof req.query.status === "string" ? req.query.status : "";
+      if (status && !["open", "reviewing", "resolved", "dismissed"].includes(status)) {
+        throw Error("REPORT_STATUS_INVALID");
+      }
+      const limit = Number(req.query.limit ?? 50);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw Error("REPORT_PAGINATION_INVALID");
+      const q = await db.query(
+        `select id, reporter_user_id as "reporterUserId", reported_user_id as "reportedUserId",
+                reason, status, created_at as "createdAt", updated_at as "updatedAt"
+         from public.oppa_user_reports
+         where ($1::text is null or status = $1)
+         order by created_at desc limit $2`,
+        [status || null, limit]
+      );
+      res.json({ reports: q.rows });
+    } catch (e) { next(e); }
+  });
+
+  // Operator triage: move a report through its review lifecycle.
+  r.post("/reports/:reportId/status", requirePermission("fraud.review"), async (req: any, res, next) => {
+    try {
+      if (!db) throw Error("DATABASE_URL is not configured");
+      const reportId = String(req.params.reportId ?? "");
+      if (!reportId || reportId.length > 64) throw Error("REPORT_ID_INVALID");
+      const status = typeof req.body?.status === "string" ? req.body.status : "";
+      if (!["reviewing", "resolved", "dismissed"].includes(status)) {
+        throw Error("REPORT_STATUS_INVALID");
+      }
+      const q = await db.query(
+        `update public.oppa_user_reports set status=$2, updated_at=now()
+         where id=$1 returning id`,
+        [reportId, status]
+      );
+      if (!q.rows[0]) throw Error("REPORT_ID_INVALID");
+      res.json({ ok: true });
+    } catch (e) { next(e); }
+  });
   return r;
 }
