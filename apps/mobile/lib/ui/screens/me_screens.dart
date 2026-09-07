@@ -494,6 +494,16 @@ class _OrdersScreenState extends State<_OrdersScreen> {
     });
   }
 
+  Future<void> _fulfill(Map order) async {
+    final r = await widget.businessApi.fulfillOrder("${order["id"] ?? ""}");
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.isSuccess
+            ? "Order marked fulfilled"
+            : (r.errorCode ?? "Could not fulfill order"))));
+    if (r.isSuccess) _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -522,6 +532,12 @@ class _OrdersScreenState extends State<_OrdersScreen> {
                             ),
                             title: Text("₦ ${((o["amountMinor"] as num? ?? 0) / 100).toStringAsFixed(2)}"),
                             subtitle: Text("Order ${o["id"] ?? ""} · ${o["status"] ?? "?"}"),
+                            // Fulfillment is a deliberate, per-order action.
+                            trailing: "${o["status"] ?? ""}" == "paid"
+                                ? FilledButton.tonal(
+                                    onPressed: () => _fulfill(o),
+                                    child: const Text("Fulfill"))
+                                : null,
                           ),
                       ],
                     ),

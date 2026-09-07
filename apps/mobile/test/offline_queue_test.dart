@@ -85,4 +85,73 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 10));
     expect(second.depth, 1, reason: "queued op survives app restart");
   });
+
+  test("full queue REJECTS instead of evicting the oldest message", () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final queue = OutboundQueue(api: FakeApi([]) as dynamic, prefs: prefs);
+    for (var i = 0; i < 200; i++) {
+      await queue.enqueue(PendingOp(
+          id: "m$i", kind: "message.send", path: "/c/m", body: {"body": "$i"}));
+    }
+    expect(queue.isFull, isTrue);
+    // The first message must still be present — no silent eviction.
+    expect(queue.all.first.id, "m0");
+    expect(
+      () => queue.enqueue(PendingOp(
+          id: "m-new", kind: "message.send", path: "/c/m", body: {"body": "new"})),
+      throwsStateError,
+    );
+  });
+
+  test("permanent 4xx keeps the message as blocked (recoverable)", () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final api = FakeApi([
+      ApiResponse(kind: AttemptKind.clientError, statusCode: 400, errorCode: "MESSAGE_BODY_INVALID"),
+    ]);
+    final queue = OutboundQueue(api: api as dynamic, prefs: prefs);
+    await queue.enqueue(PendingOp(
+        id: "rejected", kind: "message.send", path: "/c/m", body: {"body": "x"}));
+    await queue.flush();
+    expect(queue.depth, 0, reason: "blocked op is not auto-flushed");
+    expect(queue.blockedCount, 1, reason: "blocked message is retained");
+    expect(queue.all.single.id, "rejected");
+    // User retry resets it for delivery.
+    final retried = await queue.retry("rejected");
+    expect(retried, isTrue);
+    expect(queue.depth, 1);
+  });
+
+  test("exhausted retries transition to failed, never dropped", () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    // Always network-fail.
+    final queue = OutboundQueue(api: FakeApi([]) as dynamic, prefs: prefs);
+    final op = PendingOp(
+        id: "dying", kind: "message.send", path: "/c/m",
+        body: {"body": "x"}, attempts: 7); // one attempt from exhaustion
+    await queue.enqueue(op);
+    await queue.flush();
+    expect(queue.failedCount, 1, reason: "exhausted op is kept as failed");
+    expect(queue.all.single.state, PendingOp.stateFailed);
+    // Restart: failed state persists (no resurrection into auto-flush).
+    final reopened = OutboundQueue(api: FakeApi([]) as dynamic, prefs: prefs);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(reopened.all.single.state, PendingOp.stateFailed);
+    expect(reopened.depth, 0, reason: "failed ops are not auto-flushed");
+  });
+
+  test("discard is the only removal path for undelivered messages", () async {
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    final queue = OutboundQueue(api: FakeApi([]) as dynamic, prefs: prefs);
+    await queue.enqueue(PendingOp(
+        id: "held", kind: "message.send", path: "/c/m", body: {"body": "x"}));
+    await queue.flush(); // network error → stays retrying
+    expect(queue.depth, 1);
+    final gone = await queue.discard("held");
+    expect(gone, isTrue);
+    expect(queue.all, isEmpty);
+  });
 }

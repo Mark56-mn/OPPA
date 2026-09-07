@@ -440,9 +440,27 @@ class ShopScreen extends StatefulWidget {
 class _ShopScreenState extends State<ShopScreen> {
   final _businessIdController = TextEditingController();
   List<Map> _products = const [];
+  List<Map> _myOrders = const [];
   String? _businessId;
   bool _loading = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMyOrders();
+  }
+
+  Future<void> _loadMyOrders() async {
+    final r = await widget.business.myOrders();
+    if (!mounted || !r.isSuccess || r.body is! Map) return;
+    setState(() {
+      _myOrders = (((r.body as Map)["orders"] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+    });
+  }
 
   @override
   void dispose() {
@@ -515,6 +533,17 @@ class _ShopScreenState extends State<ShopScreen> {
             : (paid.errorCode == "WALLET_INSUFFICIENT_FUNDS"
                 ? "Not enough wallet balance"
                 : (paid.errorCode ?? "Payment failed")))));
+    _loadMyOrders();
+  }
+
+  Future<void> _cancel(Map order) async {
+    final r = await widget.business.cancelOrder("${order["id"] ?? ""}");
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(r.isSuccess
+            ? "Order cancelled"
+            : (r.errorCode ?? "Could not cancel"))));
+    if (r.isSuccess) _loadMyOrders();
   }
 
   @override
@@ -550,6 +579,41 @@ class _ShopScreenState extends State<ShopScreen> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(_error!,
                   style: TextStyle(color: theme.colorScheme.error)),
+            ),
+          if (_myOrders.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text("Your orders", style: theme.textTheme.titleSmall),
+              ),
+            ),
+          if (_myOrders.isNotEmpty)
+            SizedBox(
+              height: 52,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                children: [
+                  for (final o in _myOrders)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: InputChip(
+                        avatar: Icon(
+                          "${o["status"] ?? ""}" == "pending"
+                              ? Icons.schedule
+                              : Icons.check_circle_outline,
+                          size: 16,
+                        ),
+                        label: Text(
+                            "₦ ${((o["amountMinor"] as num? ?? 0) / 100).toStringAsFixed(0)} · ${o["status"] ?? "?"}"),
+                        onDeleted:
+                            "${o["status"] ?? ""}" == "pending" ? () => _cancel(o) : null,
+                        deleteIcon: const Icon(Icons.close, size: 16),
+                      ),
+                    ),
+                ],
+              ),
             ),
           Expanded(
             child: _loading

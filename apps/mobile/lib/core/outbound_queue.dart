@@ -15,6 +15,20 @@ class PendingOp {
   final Map<String, dynamic> body;
   final DateTime queuedAt;
   final int attempts;
+
+  /// Durable delivery state — nothing is ever silently discarded:
+  /// - pending: will be sent on the next flush window;
+  /// - retrying: transient failure, backoff in progress;
+  /// - blocked: the server rejected this op (4xx). The message is KEPT so
+  ///   the user can edit/retry/delete it; it is no longer auto-sent;
+  /// - failed: retry budget exhausted. The message is KEPT and surfaced;
+  ///   a manual retry resets attempts.
+  final String state;
+  static const statePending = "pending";
+  static const stateRetrying = "retrying";
+  static const stateBlocked = "blocked";
+  static const stateFailed = "failed";
+
   PendingOp({
     required this.id,
     required this.kind,
@@ -22,6 +36,7 @@ class PendingOp {
     required this.body,
     DateTime? queuedAt,
     this.attempts = 0,
+    this.state = statePending,
   }) : queuedAt = queuedAt ?? DateTime.now();
 
   Map<String, dynamic> toJson() => {
@@ -31,6 +46,7 @@ class PendingOp {
         "body": body,
         "queuedAt": queuedAt.toIso8601String(),
         "attempts": attempts,
+        "state": state,
       };
 
   static PendingOp fromJson(Map<String, dynamic> j) => PendingOp(
@@ -40,17 +56,23 @@ class PendingOp {
         body: (j["body"] as Map).cast<String, dynamic>(),
         queuedAt: DateTime.parse(j["queuedAt"] as String),
         attempts: (j["attempts"] as num?)?.toInt() ?? 0,
+        state: (j["state"] as String?) ?? statePending,
       );
 }
 
 /// Result of flushing one pending op.
 enum FlushResult { confirmed, failedPermanent, retryLater }
 
-/// Durable outbound queue for offline-first messaging (Stage N).
+/// Durable outbound queue for offline-first messaging (Stage N, hardened).
 ///
+/// LOSSLESS GUARANTEES (Stage 2 hardening):
 /// - persists to device storage so pending work survives app restarts;
 /// - flushes on reconnect and periodically with backoff;
 /// - mutations carry client idempotency keys so server retries are safe;
+/// - the queue NEVER silently drops messages: full-queue pressure keeps the
+///   oldest op and reports full via [isFull] (enqueue rejects instead of
+///   evicting), and exhausted retries / permanent rejections transition ops
+///   to blocked/failed states where they remain inspectable and recoverable;
 /// - financial operations NEVER use this queue (server must authorize
 ///   atomically while the user is present) — enforced by [enqueue].
 class OutboundQueue {
@@ -65,6 +87,9 @@ class OutboundQueue {
   static const _maxQueue = 200;
   static const _maxAttempts = 8;
 
+  /// Ops currently eligible for automatic flushing (pending or retrying).
+  static const _autoStates = {PendingOp.statePending, PendingOp.stateRetrying};
+
   final _items = <PendingOp>[];
   final _random = Random();
   Timer? _flushTimer;
@@ -73,47 +98,94 @@ class OutboundQueue {
   /// Notifies listeners (UI) of queue-depth changes.
   final _controller = StreamController<int>.broadcast();
   Stream<int> get depthStream => _controller.stream;
-  int get depth => _items.length;
+
+  /// Auto-flushable ops (pending/retrying). Blocked/failed ops are retained
+  /// but excluded from automatic delivery until the user acts.
+  int get depth =>
+      _items.where((o) => _autoStates.contains(o.state)).length;
+
+  /// All retained ops including blocked/failed ones (for user recovery UI).
+  List<PendingOp> get all => List.unmodifiable(_items);
+
+  int get blockedCount =>
+      _items.where((o) => o.state == PendingOp.stateBlocked).length;
+  int get failedCount =>
+      _items.where((o) => o.state == PendingOp.stateFailed).length;
+  bool get isFull => _items.length >= _maxQueue;
 
   /// Ops the caller may enqueue: messaging mutations with server-safe
   /// idempotency keys. Financial transfers/payments are deliberately excluded.
   static const enqueueableKinds = {"message.send", "conversation.read"};
 
+  /// Enqueues an op. Throws [StateError] when the queue is full — the caller
+  /// must surface that to the user instead of silently evicting a pending
+  /// message (no message loss under queue pressure).
   Future<void> enqueue(PendingOp op) async {
     if (!enqueueableKinds.contains(op.kind)) {
       throw ArgumentError("kind ${op.kind} is not safe for offline queueing");
     }
-    if (_items.length >= _maxQueue) _items.removeAt(0);
+    if (isFull) {
+      throw StateError("Outbound queue is full ($_maxQueue); deliver or clear blocked/failed ops first");
+    }
     _items.add(op);
     await _persist();
     _notify();
     scheduleFlush(immediate: true);
   }
 
-  /// Attempts every pending op in order. Confirmed ops are removed; permanent
-  /// 4xx failures are dropped (server rejected them; retrying is pointless);
-  /// network/5xx stay queued for the next window.
+  /// User-driven retry: resets a blocked/failed op so it is auto-flushed again.
+  Future<bool> retry(String id) async {
+    final i = _items.indexWhere((o) => o.id == id);
+    if (i < 0) return false;
+    final op = _items[i];
+    _items[i] = PendingOp(
+      id: op.id, kind: op.kind, path: op.path, body: op.body,
+      queuedAt: op.queuedAt, attempts: 0, state: PendingOp.statePending,
+    );
+    await _persist();
+    _notify();
+    scheduleFlush(immediate: true);
+    return true;
+  }
+
+  /// Explicit user deletion of a blocked/failed op — the ONLY way an
+  /// undelivered message leaves the queue.
+  Future<bool> discard(String id) async {
+    final before = _items.length;
+    _items.removeWhere((o) => o.id == id);
+    if (_items.length != before) {
+      await _persist();
+      _notify();
+      return true;
+    }
+    return false;
+  }
+
+  /// Attempts every auto-flushable op in order. Confirmed ops are removed;
+  /// permanent 4xx rejections transition to `blocked` (kept for user recovery);
+  /// exhausted retries transition to `failed` (kept). Nothing is dropped.
   Future<int> flush() async {
-    if (_flushing || _items.isEmpty) return 0;
+    if (_flushing) return 0;
+    if (!_items.any((o) => _autoStates.contains(o.state))) return 0;
     _flushing = true;
     var confirmed = 0;
     try {
       final snapshot = List<PendingOp>.from(_items);
       for (final op in snapshot) {
+        if (!_autoStates.contains(op.state)) continue;
         final result = await _attemptOne(op);
         if (result == FlushResult.confirmed) {
           _items.removeWhere((p) => p.id == op.id);
           confirmed += 1;
         } else if (result == FlushResult.failedPermanent) {
-          _items.removeWhere((p) => p.id == op.id);
+          _replace(op, PendingOp.stateBlocked, op.attempts + 1);
         } else {
-          // retryLater: bump attempts; drop after too many to avoid rot.
-          final bumped = PendingOp(
-            id: op.id, kind: op.kind, path: op.path, body: op.body,
-            queuedAt: op.queuedAt, attempts: op.attempts + 1,
+          final nextAttempts = op.attempts + 1;
+          _replace(
+            op,
+            nextAttempts >= _maxAttempts ? PendingOp.stateFailed : PendingOp.stateRetrying,
+            nextAttempts,
           );
-          _items.removeWhere((p) => p.id == op.id);
-          if (bumped.attempts < _maxAttempts) _items.add(bumped);
         }
       }
       await _persist();
@@ -122,6 +194,15 @@ class OutboundQueue {
       _flushing = false;
     }
     return confirmed;
+  }
+
+  void _replace(PendingOp op, String state, int attempts) {
+    final i = _items.indexWhere((p) => p.id == op.id);
+    if (i < 0) return;
+    _items[i] = PendingOp(
+      id: op.id, kind: op.kind, path: op.path, body: op.body,
+      queuedAt: op.queuedAt, attempts: attempts, state: state,
+    );
   }
 
   Future<FlushResult> _attemptOne(PendingOp op) async {
@@ -141,15 +222,18 @@ class OutboundQueue {
   /// Schedules a flush: immediately on reconnect, otherwise with backoff.
   void scheduleFlush({bool immediate = false}) {
     _flushTimer?.cancel();
-    if (immediate && _items.isNotEmpty) {
+    final hasAuto = _items.any((o) => _autoStates.contains(o.state));
+    if (immediate && hasAuto) {
       _flushTimer = Timer(Duration.zero, () {
         flush().then((_) {
-          if (_items.isNotEmpty) scheduleFlush(); // follow-up backoff cycle
+          if (_items.any((o) => _autoStates.contains(o.state))) {
+            scheduleFlush(); // follow-up backoff cycle
+          }
         });
       });
       return;
     }
-    if (_items.isEmpty) return;
+    if (!hasAuto) return;
     final delayMs = min(60000, 2000 * (1 << min(_items.length, 5)));
     _flushTimer = Timer(
       Duration(milliseconds: delayMs + _random.nextInt(1000)),
@@ -186,7 +270,7 @@ class OutboundQueue {
     } catch (_) {}
   }
 
-  void _notify() => _controller.add(_items.length);
+  void _notify() => _controller.add(depth);
 
   void dispose() {
     _flushTimer?.cancel();

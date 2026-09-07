@@ -192,6 +192,16 @@ class BusinessRepository {
       _api.get("/business/orders/mine", query: {"limit": "$limit"});
   Future<ApiResponse> payOrder(String orderId) =>
       _api.post("/business/orders/$orderId/pay", body: {});
+
+  /// Merchant fulfillment: any staff of the business marks a paid order
+  /// fulfilled. Idempotent server-side (already-fulfilled returns the record).
+  Future<ApiResponse> fulfillOrder(String orderId) =>
+      _api.post("/business/orders/$orderId/fulfill");
+
+  /// Customer cancellation: pending (unpaid) orders only — the server rejects
+  /// paid/fulfilled/cancelled transitions, and never moves money here.
+  Future<ApiResponse> cancelOrder(String orderId) =>
+      _api.post("/business/orders/$orderId/cancel");
 }
 
 /// OPPA-native calls: start/answer/decline/hangup + event polling.
