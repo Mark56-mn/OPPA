@@ -204,3 +204,73 @@ test("cancellation is customer-only and rejects already-paid orders", async () =
     assert.equal(paidBody.error, "BUSINESS_ORDER_STATE_INVALID");
   } finally { await srv.close(); }
 });
+
+test("staff roster is viewable by staff only and masks phone numbers", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const repository = repo({
+    async listStaff(businessId, actorUserId) {
+      calls.push({ businessId, actorUserId });
+      if (actorUserId !== "u-owner") throw new Error("BUSINESS_PERMISSION_DENIED");
+      return [{
+        userId: "u-staff", role: "staff" as const, addedAt: new Date().toISOString(),
+        displayName: "Ngozi", phoneMasked: "+23480****678",
+      }];
+    },
+  });
+  const app = appFor({ userId: "u-owner" }, repository);
+  const srv = await listen(app);
+  try {
+    const res = await fetch(`${srv.url}/business/b1/staff`);
+    assert.equal(res.status, 200);
+    const body = await res.json() as { staff: Array<{ phoneMasked: string }> };
+    assert.equal(body.staff.length, 1);
+    assert.equal(body.staff[0].phoneMasked, "+23480****678");
+    assert.deepEqual(calls, [{ businessId: "b1", actorUserId: "u-owner" }]);
+    // A non-staff stranger is denied by the repository layer.
+    const strangerApp = appFor({ userId: "u-stranger" }, repository);
+    const strangerSrv = await listen(strangerApp);
+    try {
+      const denied = await fetch(`${strangerSrv.url}/business/b1/staff`);
+      assert.equal(denied.status, 403);
+    } finally { await strangerSrv.close(); }
+  } finally { await srv.close(); }
+});
+
+test("role change is owner-only, role-validated and never targets the owner", async () => {
+  const roleCalls: Array<Record<string, unknown>> = [];
+  const repository = repo({
+    async setStaffRole(businessId, actorUserId, targetUserId, role) {
+      roleCalls.push({ businessId, actorUserId, targetUserId, role });
+      if (actorUserId !== "u-owner") throw new Error("BUSINESS_PERMISSION_DENIED");
+      if (targetUserId === "u-owner") throw new Error("BUSINESS_ROLE_INVALID");
+      if (targetUserId === "ghost") throw new Error("BUSINESS_STAFF_NOT_FOUND");
+    },
+  });
+  const app = appFor({ userId: "u-owner" }, repository);
+  const srv = await listen(app);
+  try {
+    const ok = await fetch(`${srv.url}/business/b1/staff/u-staff`, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "manager" }),
+    });
+    assert.equal(ok.status, 200);
+    const badRole = await fetch(`${srv.url}/business/b1/staff/u-staff`, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "owner" }),
+    });
+    assert.equal(badRole.status, 400);
+    const ghost = await fetch(`${srv.url}/business/b1/staff/ghost`, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "staff" }),
+    });
+    assert.equal(ghost.status, 404);
+    // Owner row itself: the repository refuses any owner-row mutation.
+    const ownerRow = await fetch(`${srv.url}/business/b1/staff/u-owner`, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "staff" }),
+    });
+    assert.equal(ownerRow.status, 400);
+    assert.equal((await ownerRow.json() as { error: string }).error, "BUSINESS_ROLE_INVALID");
+    assert.equal(roleCalls.length, 3);
+  } finally { await srv.close(); }
+});

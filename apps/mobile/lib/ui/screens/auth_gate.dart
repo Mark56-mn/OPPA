@@ -2,9 +2,12 @@ import "package:flutter/material.dart";
 
 import "../../core/device_key_manager.dart";
 import "../../core/session_store.dart";
+import "../../core/voice_service.dart";
 import "../../design/oppa_themes.dart";
 
-/// Real auth journey: phone → OTP → session. Device id is generated once and
+/// Real auth journey: phone → OTP → profile (voice name) → session.
+/// The profile step supports voice input for users who cannot spell —
+/// "Tap to speak your name" (approved UI). Device id is generated once and
 /// kept in secure storage; the server binds sessions to it.
 class AuthGate extends StatefulWidget {
   const AuthGate({
@@ -22,25 +25,38 @@ class AuthGate extends StatefulWidget {
   State<AuthGate> createState() => _AuthGateState();
 }
 
+enum _AuthStep { phone, otp, profile }
+
 class _AuthGateState extends State<AuthGate> {
   final _phoneController = TextEditingController();
   final _codeController = TextEditingController();
-  final DeviceKeyManager _deviceKeys = DeviceKeyManager();
+  final _nameController = TextEditingController();
+  final _deviceKeys = DeviceKeyManager();
+  final _voice = VoiceService.instance;
+  _AuthStep _step = _AuthStep.phone;
   bool _sending = false;
   bool _verifying = false;
-  bool _otpSent = false;
+  bool _savingProfile = false;
+  bool _listening = false;
+  bool _voiceMode = true;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _voice.ensureReady();
+  }
 
   @override
   void dispose() {
     _phoneController.dispose();
     _codeController.dispose();
+    _nameController.dispose();
+    _voice.stopListening();
+    _voice.stopSpeaking();
     super.dispose();
   }
 
-  /// Device identity: a generated EC P-256 keypair whose SPKI public PEM is
-  /// the enrollment identifier the server stores and later verifies proofs
-  /// against. Private key never leaves secure storage.
   Future<String> _deviceId() => _deviceKeys.publicKeyPem();
 
   Future<void> _sendOtp() async {
@@ -53,7 +69,7 @@ class _AuthGateState extends State<AuthGate> {
       final response = await widget.session.requestOtp(phone);
       if (!mounted) return;
       if (response.isSuccess) {
-        setState(() => _otpSent = true);
+        setState(() => _step = _AuthStep.otp);
       } else {
         setState(() => _error = response.errorCode ?? "Could not send the code");
       }
@@ -75,12 +91,62 @@ class _AuthGateState extends State<AuthGate> {
         deviceId,
       );
       if (!mounted) return;
-      if (!response.isSuccess) {
+      if (response.isSuccess) {
+        // Session is live; the name step is a local profile save before the
+        // shell swaps in. Users can also skip and add it later in Me.
+        setState(() => _step = _AuthStep.profile);
+      } else {
         setState(() => _error = response.errorCode ?? "Verification failed");
       }
-      // Success: SessionStore flips phase; the shell swaps to Home.
     } finally {
       if (mounted) setState(() => _verifying = false);
+    }
+  }
+
+  Future<void> _toggleListenName() async {
+    if (_listening) {
+      await _voice.stopListening();
+      if (mounted) setState(() => _listening = false);
+      return;
+    }
+    final started = await _voice.startListening(
+      localeId: voiceLocales["en"] ?? "en-US",
+      timeout: const Duration(seconds: 6),
+      onPartial: (text) {
+        if (mounted) _nameController.text = text;
+      },
+      onFinal: (text) {
+        if (!mounted) return;
+        setState(() {
+          _listening = false;
+          _nameController.text = text;
+        });
+        // Read the name back so non-literate users confirm what was heard.
+        _voice.speak(text, languageTag: voiceLocales["en"] ?? "en-US");
+      },
+    );
+    if (!mounted) return;
+    setState(() => _listening = started);
+    if (!started) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              "Voice input is not available on this device — type your name instead")));
+      setState(() => _voiceMode = false);
+    }
+  }
+
+  Future<void> _finishProfile() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      // Skip: the shell handles a blank profile; user can add it in Me.
+      widget.session.completeOnboarding();
+      return;
+    }
+    setState(() => _savingProfile = true);
+    try {
+      await widget.session.completeOnboarding(displayName: name);
+    } finally {
+      if (mounted) setState(() => _savingProfile = false);
     }
   }
 
@@ -105,51 +171,11 @@ class _AuthGateState extends State<AuthGate> {
                       ?.copyWith(color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
                 ),
                 const SizedBox(height: 32),
-                if (!_otpSent) ...[
-                  TextField(
-                    controller: _phoneController,
-                    keyboardType: TextInputType.phone,
-                    autofillHints: const [AutofillHints.telephoneNumber],
-                    decoration: const InputDecoration(
-                      labelText: "Phone number",
-                      hintText: "+234 801 234 5678",
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    onPressed: _sending ? null : _sendOtp,
-                    child: _sending
-                        ? const SizedBox(
-                            width: 20, height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text("Send code"),
-                  ),
-                ] else ...[
-                  TextField(
-                    controller: _codeController,
-                    keyboardType: TextInputType.number,
-                    maxLength: 6,
-                    textAlign: TextAlign.center,
-                    style: theme.textTheme.headlineMedium,
-                    decoration: const InputDecoration(
-                      labelText: "6-digit code",
-                      counterText: "",
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    onPressed: _verifying ? null : _verifyOtp,
-                    child: _verifying
-                        ? const SizedBox(
-                            width: 20, height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text("Verify and continue"),
-                  ),
-                  TextButton(
-                    onPressed: _verifying ? null : () => setState(() => _otpSent = false),
-                    child: const Text("Change number"),
-                  ),
-                ],
+                switch (_step) {
+                  _AuthStep.phone => _phoneStep(theme),
+                  _AuthStep.otp => _otpStep(theme),
+                  _AuthStep.profile => _profileStep(theme),
+                },
                 if (_error != null) ...[
                   const SizedBox(height: 12),
                   Text(_error!,
@@ -165,6 +191,155 @@ class _AuthGateState extends State<AuthGate> {
       ),
     );
   }
+
+  Widget _phoneStep(ThemeData theme) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _phoneController,
+            keyboardType: TextInputType.phone,
+            autofillHints: const [AutofillHints.telephoneNumber],
+            decoration: const InputDecoration(
+              labelText: "Phone number",
+              hintText: "+234 801 234 5678",
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _sending ? null : _sendOtp,
+            child: _sending
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Text("Send code"),
+          ),
+        ],
+      );
+
+  Widget _otpStep(ThemeData theme) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextField(
+            controller: _codeController,
+            keyboardType: TextInputType.number,
+            maxLength: 6,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.headlineMedium,
+            decoration: const InputDecoration(
+              labelText: "6-digit code",
+              counterText: "",
+            ),
+          ),
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _verifying ? null : _verifyOtp,
+            child: _verifying
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : const Text("Verify and continue"),
+          ),
+          TextButton(
+            onPressed: _verifying ? null : () => setState(() => _step = _AuthStep.phone),
+            child: const Text("Change number"),
+          ),
+        ],
+      );
+
+  Widget _profileStep(ThemeData theme) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text("What should we call you?",
+              style: theme.textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 8),
+          Text("Tap the mic and say your name. Others will see it when you chat.",
+              style: theme.textTheme.bodyMedium
+                  ?.copyWith(color: theme.colorScheme.onSurface.withValues(alpha: 0.7))),
+          const SizedBox(height: 20),
+          // Voice / type mode switch (approved UI: "Type ⌨ | 🎙 Speak").
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: false, icon: Icon(Icons.keyboard_alt_outlined), label: Text("Type")),
+              ButtonSegment(value: true, icon: Icon(Icons.mic_rounded), label: Text("Speak")),
+            ],
+            selected: {_voiceMode},
+            onSelectionChanged: (s) => setState(() => _voiceMode = s.first),
+          ),
+          const SizedBox(height: 16),
+          if (_voiceMode) ...[
+            Center(
+              child: Column(
+                children: [
+                  GestureDetector(
+                    onTap: _toggleListenName,
+                    child: CircleAvatar(
+                      radius: 40,
+                      backgroundColor: _listening
+                          ? theme.colorScheme.primary.withValues(alpha: 0.2)
+                          : theme.colorScheme.surfaceContainerHighest,
+                      child: Icon(
+                        _listening ? Icons.stop : Icons.mic_rounded,
+                        size: 36,
+                        color: _listening ? theme.colorScheme.primary : null,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    _listening ? "Listening… say your name" : "Tap to speak your name",
+                    style: theme.textTheme.bodyMedium,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Approved flow: speak → EDIT the transcription → confirm.
+            // Speech recognition is imperfect; the user must be able to fix
+            // what was heard before it is saved to their profile.
+            TextField(
+              controller: _nameController,
+              maxLength: 80,
+              enabled: !_listening,
+              textCapitalization: TextCapitalization.words,
+              decoration: InputDecoration(
+                labelText: "Check and edit your name",
+                helperText: "Is this right? Tap to correct it",
+                suffixIcon: _nameController.text.isEmpty
+                    ? null
+                    : IconButton(
+                        tooltip: "Clear",
+                        onPressed: () => setState(() => _nameController.clear()),
+                        icon: const Icon(Icons.clear),
+                      ),
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+          ] else ...[
+            TextField(
+              controller: _nameController,
+              textCapitalization: TextCapitalization.words,
+              maxLength: 80,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: "Your name"),
+            ),
+          ],
+          const SizedBox(height: 16),
+          FilledButton(
+            onPressed: _savingProfile ? null : _finishProfile,
+            child: _savingProfile
+                ? const SizedBox(
+                    width: 20, height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : Text(_nameController.text.trim().isEmpty
+                    ? "Skip — add it later"
+                    : "Confirm and continue"),
+          ),
+          TextButton(
+            onPressed: _savingProfile ? null : () => widget.session.completeOnboarding(),
+            child: const Text("Skip for now"),
+          ),
+        ],
+      );
 }
 
 /// Theme chooser shown at onboarding (theme = visual tokens only).

@@ -152,6 +152,33 @@ export function createBusinessRouter(businesses: PostgresBusinessRepository) {
     } catch (e) { next(e); }
   });
 
+  // Staff roster (any staff of the business may view).
+  router.get("/:businessId/staff", async (req, res, next) => {
+    try {
+      const businessId = String(req.params.businessId);
+      res.json({ staff: await businesses.listStaff(businessId, req.auth!.userId) });
+    } catch (e) { next(e); }
+  });
+
+  // Owner-only role change (manager/staff only; owner row immutable).
+  router.patch("/:businessId/staff/:userId", requireJsonBody, async (req, res, next) => {
+    try {
+      const businessId = String(req.params.businessId);
+      const targetUserId = String(req.params.userId ?? "");
+      const role = typeof req.body?.role === "string" ? req.body.role : "";
+      if (!targetUserId || targetUserId.length > 128) {
+        res.status(400).json({ error: "USER_ID_REQUIRED", requestId: res.locals.requestId });
+        return;
+      }
+      if (!["manager", "staff"].includes(role)) {
+        res.status(400).json({ error: "BUSINESS_ROLE_INVALID", requestId: res.locals.requestId });
+        return;
+      }
+      await businesses.setStaffRole(businessId, req.auth!.userId, targetUserId, role as "manager" | "staff");
+      res.status(200).json({ ok: true });
+    } catch (e) { next(e); }
+  });
+
   router.get("/:businessId/analytics", async (req, res, next) => {
     try {
       const businessId = String(req.params.businessId);

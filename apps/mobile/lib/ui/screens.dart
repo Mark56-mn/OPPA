@@ -9,6 +9,9 @@ import "widgets/common.dart";
 import "screens/chat_screens.dart";
 import "screens/home_screens.dart";
 import "screens/me_screens.dart";
+import "screens/notification_screens.dart";
+import "screens/settings_screen.dart";
+import "screens/translator_screen.dart";
 import "screens/wallet_screens.dart";
 
 export "screens/auth_gate.dart";
@@ -80,9 +83,25 @@ class HomeShell extends StatelessWidget {
                         conversations: conversations,
                         business: business,
                         connectivity: connectivity,
-                        onOpenNotifications: () {},
+                        onOpenNotifications: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => NotificationsScreen(
+                                    notifications: notifications,
+                                    connectivity: connectivity))),
                         onOpenSupport: () => Navigator.of(context).push(
                             MaterialPageRoute(builder: (_) => const SupportScreen())),
+                        onOpenTranslator: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => TranslatorScreen(
+                                    messages: messages))),
+                        onOpenSettings: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => SettingsScreen(
+                                    session: session,
+                                    notifications: notifications,
+                                    connectivity: connectivity,
+                                    themeId: themeId,
+                                    onThemeChanged: onThemeChanged))),
                       ),
                       ChatsScreen(
                         conversations: conversations,
@@ -100,6 +119,7 @@ class HomeShell extends StatelessWidget {
                           session: session,
                           connectivity: connectivity),
                       BusinessScreen(
+                          session: session,
                           business: business, connectivity: connectivity),
                       MeScreen(
                           session: session,

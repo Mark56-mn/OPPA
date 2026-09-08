@@ -6,6 +6,7 @@ import "../../core/session_store.dart";
 import "../../data/repositories.dart";
 import "../../design/oppa_themes.dart";
 import "../widgets/common.dart";
+import "business_app.dart" show BusinessApp;
 
 /// Me / Security tab: profile, theme, security posture, sign-out.
 class MeScreen extends StatefulWidget {
@@ -170,10 +171,12 @@ class _MeScreenState extends State<MeScreen> {
 class BusinessScreen extends StatefulWidget {
   const BusinessScreen({
     super.key,
+    required this.session,
     required this.business,
     required this.connectivity,
   });
 
+  final SessionStore session;
   final BusinessRepository business;
   final ConnectivityService connectivity;
 
@@ -273,7 +276,11 @@ class _BusinessScreenState extends State<BusinessScreen> {
                   padding: const EdgeInsets.all(16),
                   children: [
                     for (final b in _businesses())
-                      _BusinessCard(business: b, businessApi: widget.business),
+                      _BusinessCard(
+                          business: b,
+                          businessApi: widget.business,
+                          session: widget.session,
+                          connectivity: widget.connectivity),
                   ],
                 ),
           _ => const SizedBox.shrink(),
@@ -284,10 +291,17 @@ class _BusinessScreenState extends State<BusinessScreen> {
 }
 
 class _BusinessCard extends StatelessWidget {
-  const _BusinessCard({required this.business, required this.businessApi});
+  const _BusinessCard({
+    required this.business,
+    required this.businessApi,
+    required this.session,
+    required this.connectivity,
+  });
 
   final Map business;
   final BusinessRepository businessApi;
+  final SessionStore session;
+  final ConnectivityService connectivity;
 
   @override
   Widget build(BuildContext context) {
@@ -302,337 +316,23 @@ class _BusinessCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(name, style: theme.textTheme.titleMedium),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) =>
-                          _ProductsScreen(businessId: id, businessApi: businessApi))),
-                  icon: const Icon(Icons.inventory_2_outlined),
-                  label: const Text("Products"),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => _OrdersScreen(
-                          businessId: id, businessApi: businessApi))),
-                  icon: const Icon(Icons.receipt_long_outlined),
-                  label: const Text("Orders"),
-                ),
-                OutlinedButton.icon(
-                  onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) =>
-                          _AnalyticsScreen(businessId: id, businessApi: businessApi))),
-                  icon: const Icon(Icons.insights_outlined),
-                  label: const Text("Analytics"),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ProductsScreen extends StatefulWidget {
-  const _ProductsScreen({required this.businessId, required this.businessApi});
-
-  final String businessId;
-  final BusinessRepository businessApi;
-
-  @override
-  State<_ProductsScreen> createState() => _ProductsScreenState();
-}
-
-class _ProductsScreenState extends State<_ProductsScreen> {
-  List<Map> _products = const [];
-  bool _loading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    final r = await widget.businessApi.listProducts(widget.businessId);
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      if (r.isSuccess) {
-        _products = (((r.body as Map?)?["products"] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => e.cast<String, dynamic>())
-            .toList();
-      } else {
-        _error = r.errorCode ?? "Could not load products";
-      }
-    });
-  }
-
-  Future<void> _add() async {
-    final created = await showDialog<({String name, int priceMinor})>(
-      context: context,
-      builder: (context) {
-        final name = TextEditingController();
-        final price = TextEditingController();
-        return AlertDialog(
-          title: const Text("New product"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: name, maxLength: 120,
-                  decoration: const InputDecoration(labelText: "Name")),
-              TextField(controller: price, keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: "Price (₦)")),
-            ],
-          ),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-            FilledButton(
-                onPressed: () {
-                  final naira = int.tryParse(price.text.trim());
-                  if (name.text.trim().isEmpty || naira == null || naira <= 0) return;
-                  Navigator.pop(context,
-                      (name: name.text.trim(), priceMinor: naira * 100));
-                },
-                child: const Text("Add")),
-          ],
-        );
-      },
-    );
-    if (created == null) return;
-    final r = await widget.businessApi.createProduct(
-      widget.businessId,
-      name: created.name,
-      priceMinor: created.priceMinor,
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(r.isSuccess ? "Product added" : (r.errorCode ?? "Failed"))));
-    if (r.isSuccess) _load();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("Products")),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _add,
-        child: const Icon(Icons.add),
-      ),
-      body: _loading
-          ? const StateViews.loading()
-          : _error != null
-              ? StateViews.error(_error!, onRetry: _load)
-              : _products.isEmpty
-                  ? const StateViews.empty(
-                      "No products yet — add your first item")
-                  : ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        for (final p in _products)
-                          ListTile(
-                            leading: const Icon(Icons.inventory_2_outlined),
-                            title: Text("${p["name"] ?? "Product"}"),
-                            subtitle: Text(
-                                "₦ ${((p["priceMinor"] as num? ?? 0) / 100).toStringAsFixed(2)}"),
-                          ),
-                      ],
-                    ),
-    );
-  }
-}
-
-class _OrdersScreen extends StatefulWidget {
-  const _OrdersScreen({required this.businessId, required this.businessApi});
-
-  final String businessId;
-  final BusinessRepository businessApi;
-
-  @override
-  State<_OrdersScreen> createState() => _OrdersScreenState();
-}
-
-class _OrdersScreenState extends State<_OrdersScreen> {
-  List<Map> _orders = const [];
-  bool _loading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    final r = await widget.businessApi.listOrders(widget.businessId);
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      if (r.isSuccess) {
-        _orders = (((r.body as Map?)?["orders"] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => e.cast<String, dynamic>())
-            .toList();
-      } else {
-        _error = r.errorCode ?? "Could not load orders";
-      }
-    });
-  }
-
-  Future<void> _fulfill(Map order) async {
-    final r = await widget.businessApi.fulfillOrder("${order["id"] ?? ""}");
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text(r.isSuccess
-            ? "Order marked fulfilled"
-            : (r.errorCode ?? "Could not fulfill order"))));
-    if (r.isSuccess) _load();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("Orders")),
-      body: _loading
-          ? const StateViews.loading()
-          : _error != null
-              ? StateViews.error(_error!, onRetry: _load)
-              : _orders.isEmpty
-                  ? const StateViews.empty("No orders yet")
-                  : ListView(
-                      padding: const EdgeInsets.all(16),
-                      children: [
-                        for (final o in _orders)
-                          ListTile(
-                            leading: Icon(
-                              switch ("${o["status"] ?? ""}") {
-                                "paid" => Icons.check_circle,
-                                "fulfilled" => Icons.done_all,
-                                "pending" => Icons.schedule,
-                                _ => Icons.receipt_long_outlined,
-                              },
-                              color: o["status"] == "pending"
-                                  ? Theme.of(context).colorScheme.secondary
-                                  : Theme.of(context).colorScheme.primary,
-                            ),
-                            title: Text("₦ ${((o["amountMinor"] as num? ?? 0) / 100).toStringAsFixed(2)}"),
-                            subtitle: Text("Order ${o["id"] ?? ""} · ${o["status"] ?? "?"}"),
-                            // Fulfillment is a deliberate, per-order action.
-                            trailing: "${o["status"] ?? ""}" == "paid"
-                                ? FilledButton.tonal(
-                                    onPressed: () => _fulfill(o),
-                                    child: const Text("Fulfill"))
-                                : null,
-                          ),
-                      ],
-                    ),
-    );
-  }
-}
-
-class _AnalyticsScreen extends StatefulWidget {
-  const _AnalyticsScreen({required this.businessId, required this.businessApi});
-
-  final String businessId;
-  final BusinessRepository businessApi;
-
-  @override
-  State<_AnalyticsScreen> createState() => _AnalyticsScreenState();
-}
-
-class _AnalyticsScreenState extends State<_AnalyticsScreen> {
-  Map? _data;
-  bool _loading = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    final r = await widget.businessApi.analytics(widget.businessId);
-    if (!mounted) return;
-    setState(() {
-      _loading = false;
-      if (r.isSuccess && r.body is Map) {
-        _data = (r.body as Map).cast<String, dynamic>();
-      } else {
-        _error = r.errorCode ?? "Could not load analytics";
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("Analytics")),
-      body: _loading
-          ? const StateViews.loading()
-          : _error != null
-              ? StateViews.error(_error!, onRetry: _load)
-              : ListView(
-                  padding: const EdgeInsets.all(16),
-                  children: [
-                    _StatCard(
-                        label: "Orders (total)",
-                        value: "${_data?["ordersTotal"] ?? 0}"),
-                    _StatCard(
-                        label: "Orders paid",
-                        value: "${_data?["ordersPaid"] ?? 0}"),
-                    _StatCard(
-                        label: "Revenue",
-                        value:
-                            "₦ ${(((_data?["revenueMinor"] as num?) ?? 0) / 100).toStringAsFixed(2)}"),
-                  ],
-                ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  const _StatCard({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(label,
-                style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
             const SizedBox(height: 4),
-            Text(value,
-                style: theme.textTheme.headlineSmall
-                    ?.copyWith(fontWeight: FontWeight.w700)),
+            Text("Business account", style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+            const SizedBox(height: 12),
+            // The Business app is its own surface with merchant navigation —
+            // not consumer tabs with extra buttons.
+            FilledButton.icon(
+              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => BusinessApp(
+                      session: session,
+                      business: businessApi,
+                      connectivity: connectivity,
+                      initialBusinessId: id,
+                      initialBusinessName: name))),
+              icon: const Icon(Icons.storefront_outlined),
+              label: const Text("Open Business app"),
+            ),
           ],
         ),
       ),

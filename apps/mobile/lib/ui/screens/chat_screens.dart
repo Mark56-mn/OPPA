@@ -5,9 +5,12 @@ import "package:flutter/material.dart";
 import "../../core/api_client.dart";
 import "../../core/connectivity_service.dart";
 import "../../core/screen_data.dart";
+import "../../core/translation_service.dart";
+import "../../core/voice_service.dart";
 import "../../data/repositories.dart";
 import "../widgets/common.dart";
 import "call_screen.dart";
+import "translator_screen.dart";
 
 /// Chats tab: conversation list with unread counts, cache-first.
 class ChatsScreen extends StatefulWidget {
@@ -37,7 +40,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
   Future<void> _load() async {
     setState(() => _state = const ViewLoading());
-    final source = DataSource(
+    final source = ScreenDataSource<Map>(
       connectivity: widget.connectivity,
       fetch: widget.conversations.list,
       decode: (b) => (b as Map).cast<String, dynamic>(),
@@ -92,7 +95,8 @@ class _ChatsScreenState extends State<ChatsScreen> {
   static String _initial(String s) => s.isEmpty ? "?" : s.characters.first.toUpperCase();
 }
 
-/// One conversation thread: history, offline-pending sends, read receipts.
+/// One conversation thread: real chat bubbles, voice-to-text composer,
+/// per-message translate + read-aloud, offline-pending sends, read receipts.
 class ChatThreadScreen extends StatefulWidget {
   const ChatThreadScreen({
     super.key,
@@ -114,10 +118,16 @@ class ChatThreadScreen extends StatefulWidget {
 class _ChatThreadScreenState extends State<ChatThreadScreen> {
   final _controller = TextEditingController();
   final _scroll = ScrollController();
+  final _voice = VoiceService.instance;
   List<Map> _history = const [];
   bool _loading = true;
+  bool _listening = false;
   String? _error;
   final Set<String> _pendingSends = {};
+  // Per-message translations (messageId → translated text) and the language
+  // they were rendered into, so a translate action is one tap and repeatable.
+  final Map<String, TranslationResult> _translations = {};
+  String _myTranslateTarget = "en";
 
   String get _conversationId => widget.conversation["id"] as String;
 
@@ -126,12 +136,15 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     super.initState();
     _load();
     _checkIncomingCall();
+    _voice.ensureReady();
   }
 
   @override
   void dispose() {
     _controller.dispose();
     _scroll.dispose();
+    _voice.stopListening();
+    _voice.stopSpeaking();
     super.dispose();
   }
 
@@ -217,6 +230,60 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     }
   }
 
+  Future<void> _toggleVoiceInput() async {
+    if (_listening) {
+      await _voice.stopListening();
+      if (mounted) setState(() => _listening = false);
+      return;
+    }
+    final started = await _voice.startListening(
+      localeId: voiceLocales[_myTranslateTarget] ?? "en-US",
+      timeout: const Duration(seconds: 10),
+      onPartial: (text) {
+        if (mounted) _controller.text = text;
+      },
+      onFinal: (text) {
+        if (!mounted) return;
+        setState(() {
+          _listening = false;
+          _controller.text = text;
+        });
+      },
+    );
+    if (!mounted) return;
+    if (started) {
+      setState(() => _listening = true);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Voice input is not available on this device")));
+    }
+  }
+
+  /// Translates a message into [target] via the offline phrasebook and, when
+  /// [speak] is set, reads it aloud (for non-literate users).
+  Future<void> _translateMessage(Map message,
+      {required String target, required bool speak}) async {
+    final id = "${message["id"] ?? ""}";
+    final body = "${message["body"] ?? ""}";
+    if (body.isEmpty) return;
+    final result = const TranslationService().translate(
+        text: body, from: "auto", to: target);
+    if (!mounted) return;
+    setState(() => _translations[id] = result);
+    if (speak && result.usedOfflineBook) {
+      final ok =
+          await _voice.speak(result.output, languageTag: ttsLocaleFor(target));
+      if (!mounted) return;
+      if (!ok) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text("No voice installed for this language")));
+      }
+    } else if (speak) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Not in the offline phrasebook yet — no translation")));
+    }
+  }
+
   Future<void> _startCall({required bool video}) async {
     final response = await widget.calls.start(_conversationId, video: video);
     if (!mounted) return;
@@ -241,6 +308,11 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     }
   }
 
+  Future<void> _openTranslator() async {
+    await Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => TranslatorScreen(messages: widget.messages)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -248,6 +320,24 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
       appBar: AppBar(
         title: Text("${widget.conversation["title"] ?? "Chat"}"),
         actions: [
+          IconButton(
+            onPressed: _openTranslator,
+            icon: const Icon(Icons.translate),
+            tooltip: "Translate",
+          ),
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.translate_outlined),
+            tooltip: "Translation language",
+            onSelected: (v) => setState(() => _myTranslateTarget = v),
+            itemBuilder: (_) => [
+              for (final l in OppaLanguage.all)
+                CheckedPopupMenuItem(
+                  value: l.code,
+                  checked: _myTranslateTarget == l.code,
+                  child: Text(l.nativeName),
+                ),
+            ],
+          ),
           IconButton(
             onPressed: () => _startCall(video: false),
             icon: const Icon(Icons.call_outlined),
@@ -284,11 +374,19 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                         controller: _scroll,
                         reverse: true,
                         itemCount: _history.length,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
                         itemBuilder: (context, i) {
                           final m = _history[i];
-                          return ListTile(
-                            title: Text("${m["body"] ?? ""}"),
-                            subtitle: Text("${m["createdAt"] ?? ""}"),
+                          final isMine =
+                              m["senderUserId"] != null && m["mine"] == true;
+                          return _MessageBubble(
+                            message: m,
+                            isMine: isMine,
+                            translation: _translations["${m["id"] ?? ""}"],
+                            onTranslate: () => _translateMessage(m,
+                                target: _myTranslateTarget, speak: false),
+                            onTranslateSpeak: () => _translateMessage(m,
+                                target: _myTranslateTarget, speak: true),
                           );
                         },
                       ),
@@ -305,15 +403,28 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
             child: Padding(
               padding: const EdgeInsets.all(8),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Expanded(
                     child: TextField(
                       controller: _controller,
-                      decoration: const InputDecoration(
-                          hintText: "Message"), 
+                      minLines: 1,
+                      maxLines: 4,
+                      decoration: InputDecoration(
+                        hintText: _listening ? "Listening…" : "Message",
+                        prefixIcon: IconButton(
+                          icon: Icon(
+                            _listening ? Icons.stop_circle : Icons.mic_none,
+                            color: _listening ? theme.colorScheme.primary : null,
+                          ),
+                          onPressed: _toggleVoiceInput,
+                          tooltip: _listening ? "Stop" : "Voice input",
+                        ),
+                      ),
                       onSubmitted: (_) => _send(),
                     ),
                   ),
+                  const SizedBox(width: 4),
                   IconButton.filled(
                     onPressed: _send,
                     icon: const Icon(Icons.send_outlined),
@@ -323,6 +434,112 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// A chat bubble with sender alignment, status, and translate/read-aloud
+/// actions. Sent state is honest: pending shows a clock, confirmed a check.
+class _MessageBubble extends StatelessWidget {
+  const _MessageBubble({
+    required this.message,
+    required this.isMine,
+    required this.translation,
+    required this.onTranslate,
+    required this.onTranslateSpeak,
+  });
+
+  final Map message;
+  final bool isMine;
+  final TranslationResult? translation;
+  final VoidCallback onTranslate;
+  final VoidCallback onTranslateSpeak;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final body = "${message["body"] ?? ""}";
+    final time = "${message["createdAt"] ?? ""}";
+    final translated = translation;
+    return Align(
+      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
+      child: GestureDetector(
+        onLongPress: onTranslate,
+        child: Container(
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.78),
+          decoration: BoxDecoration(
+            color: isMine
+                ? theme.colorScheme.primary
+                : theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.only(
+              topLeft: const Radius.circular(16),
+              topRight: const Radius.circular(16),
+              bottomLeft: Radius.circular(isMine ? 16 : 4),
+              bottomRight: Radius.circular(isMine ? 4 : 16),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                body,
+                style: theme.textTheme.bodyLarge?.copyWith(
+                    color: isMine ? theme.colorScheme.onPrimary : null),
+              ),
+              if (translated != null && translated.usedOfflineBook) ...[
+                const SizedBox(height: 6),
+                Text(
+                  translated.output,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontStyle: FontStyle.italic,
+                    color: isMine
+                        ? theme.colorScheme.onPrimary.withValues(alpha: 0.9)
+                        : theme.colorScheme.primary,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 4),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    time.length >= 16 ? time.substring(11, 16) : time,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                        color: (isMine
+                                ? theme.colorScheme.onPrimary
+                                : theme.colorScheme.onSurface)
+                            .withValues(alpha: 0.6)),
+                  ),
+                  const SizedBox(width: 6),
+                  InkWell(
+                    onTap: onTranslateSpeak,
+                    child: Icon(Icons.volume_up_outlined,
+                        size: 16,
+                        color: (isMine
+                                ? theme.colorScheme.onPrimary
+                                : theme.colorScheme.onSurface)
+                            .withValues(alpha: 0.6)),
+                  ),
+                  const SizedBox(width: 4),
+                  InkWell(
+                    onTap: onTranslate,
+                    child: Icon(Icons.translate,
+                        size: 16,
+                        color: (isMine
+                                ? theme.colorScheme.onPrimary
+                                : theme.colorScheme.onSurface)
+                            .withValues(alpha: 0.6)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -361,7 +578,7 @@ class _ContactsScreenState extends State<ContactsScreen> {
 
   Future<void> _load() async {
     setState(() => _state = const ViewLoading());
-    final source = DataSource(
+    final source = ScreenDataSource<Map>(
       connectivity: widget.connectivity,
       fetch: widget.contacts.list,
       decode: (b) => (b as Map).cast<String, dynamic>(),

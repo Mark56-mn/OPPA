@@ -16,6 +16,10 @@ dependencies:
   flutter_secure_storage: ^9.2.2
   shared_preferences: ^2.3.2
   pointycastle: ^3.9.1
+  # Voice-to-text + text-to-speech (on-device engines, honest degradation
+  # when a device has no speech service installed).
+  speech_to_text: ^6.6.0
+  flutter_tts: ^4.2.0
 
 dev_dependencies:
   flutter_test:

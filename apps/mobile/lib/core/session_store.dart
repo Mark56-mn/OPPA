@@ -21,9 +21,31 @@ class SessionStore {
   AuthPhase get phase => _phase;
   Stream<AuthPhase> get stream => _phaseController.stream;
 
+  /// True after OTP verify but before the profile name step completes.
+  bool get awaitingProfileName => _awaitingProfile;
+  bool _awaitingProfile = false;
+
   Future<void> bootstrap() async {
     final refresh = await tokens.refreshToken();
     _setPhase(refresh == null ? AuthPhase.signedOut : AuthPhase.authenticated);
+  }
+
+  /// Onboarding final step: save the display name (voice-dictated or typed)
+/// through the real profile API, then enter the app. Skipping keeps the
+/// account valid — the name can be added later in Me → Profile.
+  Future<void> completeOnboarding({String? displayName}) async {
+    if (displayName != null && displayName.isNotEmpty) {
+      final response = await api.patch("/profile", body: {
+        "displayName": displayName,
+      });
+      // A failed name save must not lock the user out of the app they just
+      // verified into: surface nothing fatal, continue to Home.
+      if (!response.isSuccess) {
+        // The name was not saved; Home's profile screen still allows saving it.
+        _awaitingProfile = true;
+      }
+    }
+    _setPhase(AuthPhase.authenticated);
   }
 
   Future<ApiResponse> requestOtp(String phone) =>

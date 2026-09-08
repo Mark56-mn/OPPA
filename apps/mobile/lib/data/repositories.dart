@@ -193,6 +193,22 @@ class BusinessRepository {
   Future<ApiResponse> payOrder(String orderId) =>
       _api.post("/business/orders/$orderId/pay", body: {});
 
+  /// Staff roster (any staff of the business may view).
+  Future<ApiResponse> listStaff(String businessId) =>
+      _api.get("/business/$businessId/staff");
+
+  /// Add a staff member by user id with a role (owner-only on the server for
+  /// role changes; adding uses POST /staff).
+  Future<ApiResponse> addStaff(String businessId,
+          {required String userId, required String role}) =>
+      _api.post("/business/$businessId/staff",
+          body: {"userId": userId, "role": role});
+
+  /// Owner-only role change (manager/staff only; owner row immutable).
+  Future<ApiResponse> setStaffRole(String businessId, String userId,
+          {required String role}) =>
+      _api.patch("/business/$businessId/staff/$userId", body: {"role": role});
+
   /// Merchant fulfillment: any staff of the business marks a paid order
   /// fulfilled. Idempotent server-side (already-fulfilled returns the record).
   Future<ApiResponse> fulfillOrder(String orderId) =>

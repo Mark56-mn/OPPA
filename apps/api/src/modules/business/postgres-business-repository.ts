@@ -88,6 +88,78 @@ export class PostgresBusinessRepository {
     return (r.rows[0]?.role as BusinessRole) ?? null;
   }
 
+  /**
+   * Staff roster for the merchant Staff & Roles screen. Any staff member may
+   * view the roster; only the owner can promote/demote/remove (owner guard
+   * on the mutation methods below). Phone numbers are masked — the roster
+   * shows who is on the team, not a directory of raw identifiers.
+   */
+  async listStaff(businessId: string, actorUserId: string): Promise<Array<{
+    userId: string; role: BusinessRole; addedAt: string;
+    displayName: string | null; phoneMasked: string;
+  }>> {
+    const role = await this.roleOf(businessId, actorUserId);
+    if (!role) throw new Error("BUSINESS_PERMISSION_DENIED");
+    const r = await requireDb().query(
+      `select s.user_id as "userId", s.role, s.created_at as "addedAt",
+              p.display_name as "displayName", u.phone_e164 as "phoneRaw"
+       from public.oppa_business_staff s
+       join public.oppa_users u on u.id = s.user_id
+       left join public.oppa_profiles p on p.user_id = s.user_id
+       where s.business_id=$1
+       order by case s.role when 'owner' then 0 when 'manager' then 1 else 2 end,
+                s.created_at asc
+       limit 200`,
+      [businessId]
+    );
+    return r.rows.map((row: any) => {
+      const phone: string = row.phoneRaw ?? "";
+      return {
+        userId: row.userId,
+        role: row.role as BusinessRole,
+        addedAt: row.addedAt,
+        displayName: row.displayName ?? null,
+        phoneMasked: phone.length >= 8 ? `${phone.slice(0, 6)}****${phone.slice(-3)}` : "****",
+      };
+    });
+  }
+
+  /** Owner-only: change a staff member's role (manager/staff only — the
+   *  owner role is fixed by business creation; ownership transfer is a
+   *  deliberate non-feature in V1). Idempotent when the role already matches. */
+  async setStaffRole(businessId: string, actorUserId: string, targetUserId: string, role: "manager" | "staff"): Promise<void> {
+    if (targetUserId === actorUserId) throw new Error("BUSINESS_ROLE_SELF_INVALID");
+    const client = await requireDb().connect();
+    try {
+      await client.query("begin");
+      const actorRole = await client.query(
+        `select role from public.oppa_business_staff where business_id=$1 and user_id=$2 for update`,
+        [businessId, actorUserId]
+      );
+      if (actorRole.rows[0]?.role !== "owner") {
+        throw new Error("BUSINESS_PERMISSION_DENIED");
+      }
+      // Never allow touching the owner row (ownership transfer is out of V1).
+      const target = await client.query(
+        `select role from public.oppa_business_staff where business_id=$1 and user_id=$2 for update`,
+        [businessId, targetUserId]
+      );
+      if (!target.rows[0]) throw new Error("BUSINESS_STAFF_NOT_FOUND");
+      if (target.rows[0].role === "owner") throw new Error("BUSINESS_ROLE_INVALID");
+      await client.query(
+        `update public.oppa_business_staff set role=$3, added_by=$2
+         where business_id=$1 and user_id=$4 and role <> 'owner'`,
+        [businessId, actorUserId, role, targetUserId]
+      );
+      await client.query(
+        `insert into public.oppa_audit_events(actor_user_id,event_type,entity_type,entity_id,metadata)
+         values($1,'business.staff_role_changed','business',$2,$3::jsonb)`,
+        [actorUserId, businessId, JSON.stringify({ targetUserId, role })]
+      );
+      await client.query("commit");
+    } catch (e) { try { await client.query("rollback"); } catch {} throw e; } finally { client.release(); }
+  }
+
   async addStaff(businessId: string, actorUserId: string, newMemberId: string, role: BusinessRole): Promise<void> {
     if (!["manager", "staff"].includes(role)) throw new Error("BUSINESS_ROLE_INVALID");
     const client = await requireDb().connect();

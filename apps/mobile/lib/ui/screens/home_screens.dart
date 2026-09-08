@@ -19,6 +19,8 @@ class HomeScreen extends StatefulWidget {
     required this.connectivity,
     required this.onOpenNotifications,
     required this.onOpenSupport,
+    required this.onOpenTranslator,
+    required this.onOpenSettings,
   });
 
   final SessionStore session;
@@ -30,6 +32,8 @@ class HomeScreen extends StatefulWidget {
   final ConnectivityService connectivity;
   final VoidCallback onOpenNotifications;
   final VoidCallback onOpenSupport;
+  final VoidCallback onOpenTranslator;
+  final VoidCallback onOpenSettings;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -104,6 +108,26 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             _BalanceCard(state: _walletState, onRetry: _load),
             const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: widget.onOpenTranslator,
+                    icon: const Icon(Icons.translate_outlined),
+                    label: const Text("Translator"),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.tonalIcon(
+                    onPressed: widget.onOpenSettings,
+                    icon: const Icon(Icons.settings_outlined),
+                    label: const Text("Settings"),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
             Row(
               children: [
                 Expanded(
