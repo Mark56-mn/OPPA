@@ -1,576 +1,923 @@
-# OPPA — ONE-SESSION V1 RELEASE CANDIDATE + PERSONAL/BUSINESS WORKSPACE + VOICE UX
+# OPPA — V1 COMPLETION MASTER TASK
 
 ## Mission
 
-Complete, integrate, verify, and release-candidate the OPPA V1 application using the supplied OPPA UI reference images as the **visual source of truth**, the repository as the **implementation source of truth**, and the live API/database as the **runtime source of truth**.
+Complete the OPPA V1 application from the **actual current repository state** to a genuinely integrated, release-candidate state.
 
-Do not stop after implementing screens. Continue through backend integration, database verification, security, offline/reconnect, voice/translation, real-device verification, visual QA, and final end-to-end acceptance.
+The supplied UI reference images are the **visual source of truth**. The repository is the **implementation source of truth**. The live API/database is the **runtime source of truth**.
 
-If a feature cannot genuinely be tested because of an external/environmental blocker, mark it **BLOCKED**, never PASS, document the exact blocker, and continue with everything else that can be completed.
+Do not stop at UI creation, source inspection, unit tests, or a build that merely compiles. Execute the work below in order, verify each completed area, and continue until V1 is genuinely complete or a real external/environmental blocker prevents further progress.
+
+If a capability cannot be tested, mark it **BLOCKED**, never PASS. Record the exact blocker and continue with everything else.
 
 ---
 
-## 0. NON-NEGOTIABLE PRODUCT MODEL — ONE OPPA IDENTITY, PERSONAL + BUSINESS WORKSPACES
+# 0 — START HERE: ACTUAL-STATE AUDIT
 
-OPPA must **not** require a user to choose between a permanent Personal account and a separate Business account during initial phone registration.
+Before changing architecture or code:
 
-The required model is:
+1. Inspect the entire repository tree.
+2. Read `OPPA_MASTER_BUILD_SPEC.md`.
+3. Read `CODEX_BUILD_MAP.md`.
+4. Read `CODEX_HANDOFF.md`.
+5. Read all current V1 task/spec files.
+6. Inspect the actual Flutter source, API source, migrations, tests and web source.
+7. Compare implementation against the supplied UI reference images.
+8. Produce an internal gap matrix of:
+   - implemented
+   - partially implemented
+   - missing
+   - blocked
+   - broken
+   - security-sensitive
+9. Do not recreate functionality that already exists.
+10. Do not trust previous handoff claims without checking the source/tests/database where possible.
 
-> **One OPPA login/identity → one Personal profile → zero or more Business profiles/workspaces → seamless switching.**
+Then execute the remaining tasks below.
 
-### Personal account
+---
 
-A user first creates the normal OPPA identity:
+# 1 — PRODUCT ARCHITECTURE: ONE OPPA IDENTITY + PERSONAL/BUSINESS WORKSPACES
 
-- phone number / verified identity
-- personal name and OPPA ID
-- profile photo
-- personal chats and contacts
+This is a **non-negotiable architecture decision**.
+
+## Required model
+
+> One OPPA login/identity → one Personal profile → zero or more Business workspaces → seamless switching.
+
+A user does **not** create a separate Business login during initial phone registration.
+
+### Personal workspace
+
+Must contain the user's:
+
+- name/profile
+- OPPA ID
+- contacts
+- personal chats
 - personal calls
 - personal wallet
 - personal security/session controls
-
-Initial onboarding remains simple and should not force a business decision before the user has completed their personal OPPA setup.
+- personal settings
 
 ### Business workspace
 
-After personal onboarding, the user can:
+A user can create a business after personal onboarding or later.
 
-- create a Business Profile/workspace
-- do this from onboarding after the personal account is ready, or later from Me/Business
-- create and manage more than one business if the backend supports it
-- belong to businesses as Owner, Manager, Staff or other server-defined roles
-- switch between Personal and Business without logging out
+A business can have:
 
-A business workspace is **not a second independent OPPA login**.
+- Owner
+- Manager
+- Staff
+- other server-defined roles
 
-### Separation requirements
+Staff members use their own OPPA identities and are granted access to the business workspace.
 
-Personal and business data, permissions, navigation and financial boundaries must remain separate.
+## Workspace isolation
 
-A business staff member must never gain access to the owner's personal wallet, personal chats, personal profile controls, or personal security data merely because they belong to the business.
+Personal and Business data must never be mixed.
 
-Business financial records must not be treated as the user's personal wallet.
+A business staff member must not gain access to:
 
-### Workspace switcher
+- owner's personal wallet
+- personal chats
+- personal security controls
+- personal profile controls
+- personal sessions
 
-Implement a clear, accessible account/workspace switcher, for example:
+Business financial data must be separate from personal wallet data.
 
-- Personal: `Your Name — Personal`
-- Business: `Business Name — Owner/Manager/Staff`
+## Workspace switcher
+
+Implement a clear switcher showing:
+
+- `Your Name — Personal`
+- `Business Name — Owner/Manager/Staff`
 - `+ Create a Business`
 
-Switching workspace must update the visible navigation and active context immediately and safely.
+Switching must happen without logout.
 
-Notifications/deep links must open the correct workspace/context.
+Switching must change the active navigation/context.
 
-Do not rely on logout/login to change workspace.
+Notifications/deep links must open the correct workspace.
 
-### Consumer navigation
+If multiple businesses are supported by the backend, support switching among them without cross-business leakage.
 
-The supplied consumer OPPA UI is the source of truth for the personal experience. Preserve the intended OPPA themes and visual language while making the actual navigation functional.
+## Critical correction to current UI
 
-Typical personal navigation includes:
+Do **not** leave Business as simply a permanent fifth tab beside the personal Home/Chats/Wallet/etc.
 
-- Chats
-- Wallet
-- Calls
-- Me
+Refactor the navigation so the personal workspace has its own shell and the Business workspace has its own merchant shell.
 
-Use the actual repository/backend capabilities rather than inventing endpoints.
-
-### Business navigation
-
-Business is a **distinct application experience inside the same OPPA identity**, not the personal UI with a few merchant buttons added.
-
-The Business workspace should have its own information architecture appropriate to the supplied/reference business design and the backend capabilities, including where applicable:
-
-- Business Dashboard/Home
-- Orders
-- Products/catalogue
-- Customers
-- Business Messages/inbox
-- Staff/team and roles
-- Business Wallet / payments / settlement
-- Business profile/settings
-- Order fulfillment/cancellation
-- Support/reporting
-- relevant business notifications
-
-Keep the OPPA brand/design system consistent, but do not merge personal and merchant navigation into one confusing screen.
-
-Server-side authorization remains authoritative for every business role and financial action.
+The OPPA visual design system remains shared, but the information architecture is different.
 
 ---
 
-## 1. UI REFERENCE IMPLEMENTATION
+# 2 — PERSONAL UI COMPLETION FROM SUPPLIED REFERENCES
 
-The user has supplied OPPA UI reference images to the agent.
+Implement the supplied personal OPPA UI rather than generic Material starter screens.
 
-Treat those images as the visual source of truth for:
+Audit and complete:
 
+- Welcome
 - onboarding
-- OPPA Pulse branding
-- Personal OPPA home/chat/wallet/calls/me experience
-- theme selection
-- typography hierarchy
-- spacing
-- cards
-- buttons
-- icons
-- bottom navigation
-- empty/loading/error/offline states
-- confirmation screens
-- overall visual polish
+- Home
+- Chats
+- Chat Thread
+- Contacts/Connect
+- Calls
+- Wallet
+- Me/Profile
+- Security
+- Notifications
+- settings
+- support/help
+- error/loading/empty/offline states
 
-Do not replace the supplied design with generic Flutter starter UI.
+Preserve the supplied OPPA visual language and existing theme architecture.
 
-Implement the missing screens and states so the real application matches the supplied designs as closely as practical while preserving accessibility and platform conventions.
+Complete responsive layouts, spacing, typography, cards, buttons, icons, avatars, navigation and interaction states.
 
-The existing repository already contains Flutter screens, themes, repositories and API integration. Inspect and reuse them before creating duplicate architecture.
+Do not claim visual completion without actually viewing the running application when tooling permits.
 
 ---
 
-## 2. ONBOARDING + VOICE-FIRST NAME ENTRY
+# 3 — ONBOARDING COMPLETION
 
-Onboarding must support both typing and speech.
-
-Required flow:
+Build the complete onboarding journey:
 
 1. Welcome
 2. Phone number
-3. OTP verification
+3. OTP
 4. Create profile
-5. Choose OPPA ID
-6. Choose OPPA Look/theme
-7. Completion
-8. Optional Business creation after personal onboarding
+5. Profile photo/avatar
+6. Speak/type name
+7. OPPA ID selection
+8. OPPA ID availability
+9. OPPA Look/theme
+10. required permissions
+11. completion
+12. optional `Create a Business`
 
-### Speak your name
-
-On the profile name field, provide a prominent microphone action:
-
-> **Speak your name**
-
-The user may:
-
-- tap microphone
-- speak their name naturally
-- receive speech-to-text transcription into the name field
-- edit the result
-- speak again
-- hear/read the detected name back for confirmation
-- confirm and continue
-
-This is a core accessibility/Africa-first feature, especially for users who may have difficulty spelling or typing their names.
-
-Do not require English speech if a genuinely supported local language can be used.
-
-Never claim language support that the actual speech/translation provider does not support.
-
-If speech recognition is unavailable offline, provide an honest fallback to typing and/or clearly supported offline capability.
-
-Do not store raw audio unnecessarily.
+The user should reach a usable Personal workspace without being forced to create a Business.
 
 ---
 
-## 3. VOICE-TO-TEXT + TRANSLATION
+# 4 — VOICE-FIRST NAME ENTRY
 
-Build the voice communication feature as a first-class OPPA capability, not a decorative microphone.
+This is a core Africa-first V1 feature.
+
+The profile name field must support:
+
+- normal typing
+- microphone button
+- speech-to-text
+- edit transcription
+- retry
+- confirmation
+- read-back/TTS where genuinely supported
+
+The experience must be simple enough for users with limited typing/literacy.
+
+Do not claim local-language support unless the actual provider supports it.
+
+If production speech recognition cannot be connected, build the correct UI/provider abstraction and mark live capability BLOCKED rather than fabricating success.
+
+Do not retain raw audio unnecessarily.
+
+---
+
+# 5 — OPPA ID / IDENTITY COMPLETION
+
+The supplied design includes an OPPA ID concept.
+
+Audit the current backend and add the missing server/client functionality required for:
+
+- OPPA ID creation
+- availability checking
+- uniqueness
+- validation
+- reserved-name protection
+- safe changes where allowed
+- display/search by OPPA ID
+- profile display
+
+Identity must be server-authoritative.
+
+Do not allow the client to claim an unavailable or another user's ID.
+
+---
+
+# 6 — CONTACTS + CONNECT COMPLETION
+
+Complete the personal connection experience:
+
+- search/discovery supported by existing API
+- OPPA ID search
+- contact profile
+- add/connect
+- start chat
+- group creation if supported
+- group details
+- group members
+- leave group
+- appropriate empty/error/loading states
+
+Use the existing repository/API capabilities before adding new endpoints.
+
+---
+
+# 7 — MESSAGING COMPLETION
+
+Complete:
+
+- conversation list
+- chat thread
+- message composer
+- send state
+- pending state
+- sent/delivered/read receipts
+- failed state
+- retry
+- offline queue visibility
+- reconnect convergence
+- duplicate prevention
+- message search where supported
+- media handling where already supported
+- reporting/blocking/support
+- group messaging where supported
+
+The UI must never show a financial or message operation as successful when the server has not confirmed it.
+
+---
+
+# 8 — VOICE-TO-TEXT TRANSLATOR
+
+Build the OPPA voice translator as a real first-class feature.
 
 Required UX where supported:
 
-- tap/hold to speak
+- choose spoken language
+- choose target language
+- tap/hold microphone
 - speech → text
-- translate text
-- show original + translation
-- play translated text aloud
-- retry recording
-- edit transcription
-- send translated text into chat
-- use inside Business/customer conversations where appropriate
-- clear language selection
-- honest unsupported-language/error states
-- low-data/poor-network handling
+- edit text
+- translate
+- show original and translated text
+- text-to-speech playback where supported
+- send translated result into chat
+- use in Business/customer conversations
+- retry/error states
+- unsupported-language state
+- poor-network/low-data state
 
-The design must be simple enough for market women and users with limited typing/literacy.
+Prioritize African use cases including market women.
 
-Potential supported languages may include English, Nigerian Pidgin, Hausa, Yoruba and Igbo **only where the selected provider/implementation actually supports them**.
+Potential languages include English, Nigerian Pidgin, Hausa, Yoruba and Igbo **only if actually supported by the selected production provider**.
 
-Do not invent a translation backend. Inspect the existing API/provider architecture first. If production provider integration is not available, implement the correct UI/contracts and mark live translation as BLOCKED rather than fabricating success.
+Inspect existing provider/API architecture first. Do not invent a fake translation service.
 
-Voice messages and voice-to-text must respect privacy/security requirements.
-
----
-
-## 4. PERSONAL ↔ BUSINESS UX
-
-Implement and test these scenarios:
-
-### New personal user
-
-Phone → OTP → speak/type name → OPPA ID → theme → Personal home.
-
-No business requirement during initial registration.
-
-### Personal user later creates a business
-
-Personal → Me/Business → Create Business → business onboarding → Business workspace.
-
-### Business owner switching
-
-Personal → workspace switcher → Business → merchant dashboard → switch back to Personal without logout.
-
-### Staff member
-
-Staff's own OPPA identity → workspace switcher → assigned Business → only role-authorized business features.
-
-### Multiple businesses
-
-If supported by the backend, one OPPA identity can switch between Business A and Business B. Never leak data between workspaces.
-
-### Notifications
-
-A personal notification opens Personal context.
-A business notification opens the correct Business context.
-
-### Financial separation
-
-Personal wallet and Business settlement/payment data must remain logically and visually distinct.
+If provider credentials/integration are unavailable, mark live translation BLOCKED while still completing the correct contracts/UI where possible.
 
 ---
 
-## 5. COMPLETE CONSUMER JOURNEY
+# 9 — VOICE MESSAGES
 
-Prove as much of the following as the environment permits:
+Where voice messages are within the current V1 scope/backend capability, complete:
 
-Install → launch → onboarding → phone → OTP → profile → voice name entry → OPPA ID → theme → home → contacts/connect → conversation → message → receipt/read state → notification → wallet → payment/funding → transaction/history → security/session → support → logout/revocation → restart/recovery.
+- record
+- cancel
+- send
+- playback
+- progress
+- retry
+- failed state
+- permissions
+- privacy handling
+- network interruption handling
 
-Verify loading, empty, error, offline and reconnect states for every important screen.
-
----
-
-## 6. COMPLETE MERCHANT JOURNEY
-
-Prove:
-
-Personal account → Create Business → business profile → products → staff/roles → customer → order → payment → fulfillment/cancellation → business transaction/settlement → history → support/admin.
-
-Verify that business permissions are enforced by the API and not merely hidden in Flutter.
-
-Verify that switching back to Personal does not expose business-only data and switching into Business does not expose personal-only data.
+Do not confuse voice messages with speech-to-text translation.
 
 ---
 
-## 7. CHAT + VOICE COMMUNICATION
+# 10 — CALLS / WEBRTC
 
-Verify:
+Current call lifecycle/signaling must not be presented as full audio/video unless media is genuinely implemented.
 
-- direct chats
-- message sending
-- pending/offline messages
-- receipts
-- reconnect convergence
-- duplicate prevention
-- voice-to-text
-- translation
-- voice playback where supported
-- voice messages where implemented
-- business/customer messaging separation
-- reporting/blocking/support
+Complete or explicitly scope:
 
-Calls must be treated honestly:
+- call history
+- incoming call
+- outgoing call
+- accept/decline
+- microphone permission
+- camera permission
+- real audio
+- real video
+- WebRTC offer/answer
+- ICE candidates
+- connection state
+- reconnect
+- network degradation
+- call end
+- failure
+- TURN configuration where required
 
-- signaling/lifecycle is not equivalent to real audio/video
-- offer/answer/ICE must be genuinely wired if claiming full WebRTC
-- permissions must be handled
-- network degradation/reconnect must be tested
-- TURN requirements must be documented
-- no fake connected/media state
+If real media infrastructure is not available, clearly mark full media BLOCKED and do not fake connected/audio/video state.
 
 ---
 
-## 8. WALLET + PAYMENTS
+# 11 — WALLET UX COMPLETION
 
-Verify:
+Complete the Personal wallet journey:
 
-- balance display
-- history
-- funding flow
+- wallet landing
+- balance
+- transaction list
+- transaction detail
+- fund wallet
+- provider authorization/return
+- pending
+- success
+- failed
+- send money
+- recipient selection
+- amount
+- review
+- step-up/security confirmation
+- processing
+- success/failure/pending
+- receive/request where supported
+- limits/fees
+- wallet settings
+- help/dispute
+
+The existing secure backend is the authority for balances and transactions.
+
+Never implement client-controlled balance changes.
+
+---
+
+# 12 — PAYMENTS COMPLETION
+
+Verify and complete:
+
 - payment initialization
-- provider redirect/authorization
+- provider authorization
+- provider verification
 - webhook verification
 - idempotency
 - risk checks
-- wallet transaction integrity
-- reversal/error states
+- wallet crediting
+- reversals
 - pending/unknown outcomes
-- no false financial success
-- no client-controlled balance
-- no money operation through the offline queue
+- provider errors
+- payment history
+- reconciliation
+- refunds where V1 backend supports them
 
-Personal and business money must remain separated according to backend contracts.
+Do not report success based only on a client redirect.
 
----
-
-## 9. OFFLINE / AFRICA-FIRST BEHAVIOUR
-
-Test:
-
-- no network
-- loss of network during message send
-- network restoration
-- repeated reconnect
-- slow network
-- duplicate retry
-- app restart with pending queue
-- low-data operation
-- interrupted media transfer
-- interrupted financial request
-
-Requirements:
-
-- no message loss
-- no duplicate sends from retry races
-- queue is lossless
-- financial operations are not blindly retried
-- pending/unknown financial states are honest
-- reconnect does not hammer the API
-- cached screens remain clearly identified as cached/stale when appropriate
-- battery/memory use is reasonable
+Financial operations must not use the generic offline retry queue.
 
 ---
 
-## 10. DATABASE + BACKEND VERIFICATION
+# 13 — BUSINESS PLATFORM COMPLETION
 
-Inspect the actual live database and repository migrations.
+Business must be a distinct workspace inside the same OPPA identity.
 
-Do not assume a migration was applied because a file exists.
+Build the complete merchant information architecture:
+
+### Business onboarding
+
+- create business
+- business name
+- business category
+- business profile
+- logo/photo
+- description
+- location/contact information
+- voice-assisted business name/details where supported
+- completion
+
+### Business dashboard
+
+- business summary
+- orders
+- sales/payment summary
+- alerts
+- notifications
+- quick actions
+
+### Products
+
+- product list
+- product detail
+- create product
+- edit product
+- archive/delete where allowed
+- product description
+- price
+- images where supported
+- inventory/stock where supported
+
+### Orders
+
+- order list
+- order detail
+- order status
+- payment state
+- fulfillment
+- cancellation
+- customer information appropriate to authorization
+
+### Customers
+
+- customer list
+- customer detail
+- customer/order history
+- business/customer messaging
+
+### Business messages
+
+- business inbox
+- customer conversation
+- voice-to-text
+- translation
+- notifications
+
+### Staff/team
+
+- staff list
+- invite/add staff
+- role display
+- role changes where supported
+- remove staff
+- permissions
+
+### Business finance
+
+- business payment records
+- business ledger/settlement view
+- payout/settlement status where backend supports it
+- reconciliation
+
+Do not mix business settlement data with the user's personal wallet.
+
+### Business settings
+
+- profile
+- staff/roles
+- notifications
+- security
+- support
+
+---
+
+# 14 — BUSINESS BACKEND / DATA INTEGRITY
+
+Audit the existing business backend and add only what is actually required.
 
 Verify:
 
-- current schema/migration state
-- calls tables/invariants
-- one active/ringing call constraint per conversation where required
-- business/order/product integrity including cross-business prevention
-- grants/default privileges
-- RLS state/policies
-- indexes/constraints
-- idempotency constraints
-- audit/security tables
-- no unintended public access
+- business membership
+- role authorization
+- cross-business isolation
+- product ownership
+- order ownership
+- customer isolation
+- business financial separation
+- composite business/order/product integrity
+- idempotency
+- audit logging
 
-If `DATABASE_URL` is available, run the real Postgres regression tests. If unavailable, record BLOCKED and continue with repository-side verification.
-
-Never expose or commit database credentials.
+Attempt malicious cross-business access as part of adversarial testing.
 
 ---
 
-## 11. SECURITY / ADVERSARIAL ACCEPTANCE
+# 15 — NOTIFICATIONS COMPLETION
 
-Act as:
+Complete the actual notification UX.
 
-- anonymous attacker
+The notification button must navigate to a real notification screen.
+
+Implement where supported:
+
+- notification list
+- unread count
+- mark read
+- mark all read
+- preferences
+- notification detail/deep links
+- Personal vs Business context
+- order/payment/security/call/message notifications
+- empty/loading/error states
+
+A Business notification must open the correct Business workspace.
+
+---
+
+# 16 — SECURITY CENTER / DEVICES / SESSIONS
+
+Expose the backend security functionality in the UI.
+
+Build:
+
+- Security Center
+- active devices
+- active sessions
+- device detail
+- session detail
+- revoke device
+- revoke session
+- security alerts
+- security alert detail
+- wallet security
+- privacy controls
+- account controls
+
+Server authorization must remain authoritative.
+
+---
+
+# 17 — SUPPORT / REPORTING / ABUSE
+
+Complete user-facing support/reporting where backend capability exists:
+
+- report user/message/business
+- report status
+- support entry point
+- help/FAQ
+- fraud/security report
+- relevant report confirmation
+- status/history where supported
+
+Verify admin triage remains secure.
+
+---
+
+# 18 — ADMIN / CONTROL CENTER WEB UI
+
+The existing web surface must not be mistaken for a completed Admin Control Center.
+
+Where V1 scope requires it, build the actual admin interface for the existing admin backend:
+
+- dashboard
+- users
+- user detail
+- devices/sessions/security
+- wallet/payment operations
+- messaging operations
+- fraud/risk
+- abuse reports
+- support
+- staff/RBAC
+- audit logs
+- emergency controls
+- system health
+
+Do not create admin bypasses.
+
+Admin permissions must be server-authoritative.
+
+---
+
+# 19 — WEB / TRUST SURFACE
+
+Keep the existing public/trust surface functional and consistent with the actual product.
+
+Verify:
+
+- features
+- trust/safety
+- privacy
+- support
+- legal links where required
+- no claims for features that are not actually available
+
+Do not expand V1 into the deferred Browser/VPN/Mini Apps scope.
+
+---
+
+# 20 — OFFLINE-FIRST / AFRICA-FIRST COMPLETION
+
+Verify:
+
+- no network
+- poor network
+- slow network
+- network loss during message send
+- network restoration
+- repeated reconnect
+- app restart with pending work
+- low-data behaviour
+- interrupted media
+- duplicate retry
+
+Requirements:
+
+- lossless message queue
+- no duplicate sends from retry races
+- endpoint-aware retry
+- no blind financial retry
+- honest pending/unknown financial state
+- reconnect does not hammer API
+- cached state is clearly identified where necessary
+- reasonable battery/memory behaviour
+
+---
+
+# 21 — DATABASE / MIGRATIONS / LIVE SUPABASE
+
+Do not assume migration files equal live database state.
+
+Verify actual live database state.
+
+Check:
+
+- migration history
+- calls tables
+- call concurrency invariant
+- business/order/product integrity
+- RLS
+- policies
+- grants
+- default privileges
+- indexes
+- primary/foreign keys
+- idempotency constraints
+- audit/security tables
+- notification tables
+- no unintended public access
+
+Apply pending migrations through the approved migration process when credentials/environment are legitimately available.
+
+Run real Postgres regression tests when `DATABASE_URL` is available.
+
+Never commit or expose database credentials.
+
+---
+
+# 22 — OTP / PROVIDER INTEGRATION
+
+Verify the real OTP provider integration.
+
+No:
+
+- master OTP
+- universal OTP
+- debug OTP
+- authentication bypass
+- fake production success
+
+If BulkSMS/provider credentials are not available, record OTP as BLOCKED and continue the rest of the build.
+
+---
+
+# 23 — SECURITY ADVERSARIAL PASS
+
+Attack the completed product as:
+
+- anonymous user
 - normal user
-- revoked device
 - malicious client
+- revoked device
 - replay attacker
 - concurrent requester
 - business owner
-- business manager
-- business staff
+- manager
+- staff member
 - customer
 - admin
 
-Test at minimum:
+Test:
 
 - IDOR/BOLA
 - cross-user access
 - cross-business access
 - role escalation
 - revoked-session access
-- replay/idempotency
-- concurrent financial requests
+- replay
+- idempotency
+- concurrency
 - malformed payloads
 - oversized input
-- rate limits
+- rate limiting
 - OTP abuse
 - report abuse
 - payment/webhook spoofing
-- client-controlled balance/role/identity
-- sensitive logs
-- secrets in source/build artifacts
-- debug backdoors
+- client-controlled balance
+- client-controlled role/identity
+- sensitive logging
+- secret leakage
+- debug bypasses
 - mock success paths
 - provider-secret leakage
 
-Fix discovered vulnerabilities rather than merely documenting them when they are within repository scope.
+Fix repository-scope vulnerabilities rather than merely documenting them.
 
 ---
 
-## 12. ANDROID / REAL DEVICE VERIFICATION
+# 24 — ANDROID BUILD + REAL DEVICE QA
 
-If an Android/Flutter environment is available, actually:
+If Flutter/Android tooling is available:
 
-- build the APK/AAB
-- install/run on an emulator or real device
-- navigate through onboarding
-- test microphone permission
-- test voice name entry
-- test translation UI
-- test personal/business workspace switching
-- test chat
-- test wallet/payment UI
-- test notifications
-- test call permissions/lifecycle
-- test offline/reconnect
-- test logout/revocation
-- restart the application and verify recovery
+1. build APK
+2. build AAB where practical
+3. install on emulator/real device
+4. launch
+5. onboarding
+6. microphone permission
+7. speak name
+8. theme
+9. personal home
+10. workspace switcher
+11. create Business
+12. merchant UI
+13. chat
+14. notifications
+15. wallet/payment UI
+16. calls
+17. offline/reconnect
+18. logout/revocation
+19. app restart/recovery
 
-Do not mark these PASS if only source inspection was performed.
+Only mark PASS when actually tested.
 
-If Android/Flutter tooling is unavailable, mark each affected check BLOCKED and record the exact environment limitation.
+If unavailable, mark BLOCKED with exact environment limitation.
 
 ---
 
-## 13. VISUAL QA
+# 25 — VISUAL QA AGAINST SUPPLIED IMAGES
 
-Compare implemented screens against the supplied reference images.
+After implementation, compare the running application to the supplied UI images.
 
 Check:
 
-- dimensions/responsiveness
-- spacing
+- onboarding
+- OPPA Pulse branding
 - typography
-- theme colors
+- spacing
 - cards
 - buttons
+- icons
+- avatars
 - navigation
-- icon placement
-- profile/avatar treatment
-- onboarding progression
-- OPPA Pulse branding
-- Fluid Africa / Everyday OPPA themes
-- dark/light presentation where applicable
-- Business workspace visual distinction
+- theme behaviour
+- Personal workspace
+- Business workspace
+- loading/empty/error/offline states
 - accessibility/tap targets
-- loading/error/offline states
 
-Do not claim pixel-perfect verification without actually viewing the running application.
+Do not claim pixel-perfect or visual completion from source inspection alone.
 
 ---
 
-## 14. RELEASE SAFETY CHECK
+# 26 — COMPLETE END-TO-END ACCEPTANCE
+
+## Consumer
+
+Install → onboarding → phone → OTP → speak/type name → OPPA ID → theme → Personal home → Connect → chat → receipts → notification → wallet → payment → history → security → support → logout → restart/recovery.
+
+## Merchant
+
+Personal → Create Business → business profile → products → staff/roles → customer → order → payment → fulfillment/cancellation → business financial records/settlement → history → support/admin → switch back to Personal.
+
+## Workspace
+
+Personal → Business → Personal → Business A → Business B where supported.
+
+Attempt to access data from the wrong workspace and verify denial.
+
+## Calls
+
+A invites B → incoming call → accept → real media if implemented → network degradation → reconnect → end → history.
+
+## Offline
+
+No network → create/send message → pending → app restart → network restored → sync → no duplicate → correct final state.
+
+---
+
+# 27 — FINAL RELEASE SAFETY CHECK
 
 Before declaring V1 release candidate:
 
 - no secrets in repository
 - no provider secrets in Flutter
-- no hard-coded OTP bypass
-- no universal/master OTP
+- no OTP bypass
 - no debug authentication bypass
-- no mock production success
 - no fake payment success
-- no client-controlled wallet balance
+- no client-controlled balance
 - no client-controlled role/identity
-- no unsafe retry of financial operations
-- no accidental public database access
-- no unintended WhatsApp V1 feature expansion
-- no Browser/VPN/Mini Apps expansion
-- no unnecessary dependencies
+- no unsafe financial retry
+- no unintended public DB access
 - no high/critical unresolved security defect
-- Business and Personal data boundaries verified
-- voice/translation claims match actual provider capability
+- Personal/Business separation verified
+- voice/translation claims match actual capability
+- calls honestly scoped
+- WhatsApp remains V2
+- Browser/VPN/Mini Apps remain outside V1
 
 ---
 
-## 15. VERIFICATION COMMANDS
+# 28 — REQUIRED VERIFICATION
 
-Run the strongest available verification set, including as applicable:
+Run the strongest available set:
 
 - Flutter dependency resolution
 - `flutter analyze`
 - `flutter test`
-- Android debug/release build
+- Android build
 - API typecheck
 - API build
 - API tests
-- DB migration/integration tests
+- DB migration tests
+- real Postgres tests
 - security/adversarial tests
 - static scans
 - dependency/security scans
 - API smoke tests
-- real-device/E2E tests
+- E2E tests
+- real-device tests where available
 
 Record exact commands and results.
 
 ---
 
-## 16. COMPLETION RULE
+# 29 — HANDOFF / CREDIT EXHAUSTION
 
-You are **NOT DONE** merely because:
+If credits, context, time or environment access run out:
 
-- the UI compiles
-- screens exist
-- the API tests pass
-- a handoff says complete
-- a migration file exists
+Update `CODEX_HANDOFF.md` before stopping.
 
-V1 is complete only when the implemented product is integrated and the strongest available end-to-end evidence supports:
-
-1. backend/database verified
-2. security/adversarial checks completed
-3. consumer journey works
-4. merchant/business journey works
-5. Personal/Business workspace boundaries work
-6. offline/reconnect behaviour works
-7. Flutter is genuinely connected to the API
-8. supplied UI is implemented and visually checked where tooling permits
-9. voice name entry is implemented or honestly BLOCKED
-10. voice-to-text/translation is implemented or honestly BLOCKED
-11. Android verification is completed or honestly BLOCKED
-12. calls are honestly scoped and verified
-13. no critical/high unresolved security defect remains
-14. every blocked check is documented
-15. `CODEX_HANDOFF.md` contains the final exact state
-
-Do not stop after the first successful stage. Continue until genuine V1 completion or a real external/environmental blocker prevents further progress.
-
----
-
-## 17. CREDIT / CONTEXT EXHAUSTION
-
-If credits, context or execution time are exhausted:
-
-Update `CODEX_HANDOFF.md` before stopping with:
+Record:
 
 - starting commit
 - ending commit
-- completed stages
-- partially completed stages
-- untouched stages
+- completed tasks
+- partial tasks
+- untouched tasks
 - exact files changed
-- exact migrations applied/not applied
-- exact database verification status
-- exact Flutter verification status
-- exact Android verification status
-- exact UI/reference verification status
-- voice name entry status
+- migrations applied/not applied
+- live DB status
+- Flutter status
+- Android status
+- UI/reference status
+- voice name status
 - translation status
-- Personal/Business workspace status
+- workspace architecture status
+- business UI status
 - calls/WebRTC status
-- tests run and results
+- tests and results
 - security findings
-- known blockers
+- blockers
 - risks
 - exact next action
 
-Never fabricate completion or test results.
+Never fabricate test results or completion.
 
 ---
 
-## Final instruction
+# 30 — COMPLETION RULE
 
-**Execute this task, do not merely explain it. Inspect first, implement second, integrate third, test fourth, attack fifth, visually verify sixth, and only then report the final state.**
+The product is **NOT COMPLETE** merely because:
 
-The user's supplied UI images are the design reference. The repository/API/database are the technical truth. The final product must provide one OPPA identity with cleanly separated Personal and Business workspaces, seamless switching, Africa-first voice assistance, and a genuinely verified end-to-end application.
+- screens exist
+- Flutter compiles
+- tests pass
+- the API builds
+- a migration file exists
+- a previous handoff says complete
+
+V1 is complete only when the strongest available evidence supports:
+
+1. Personal UI is implemented.
+2. Business UI is implemented as a distinct workspace.
+3. One OPPA identity can safely manage Personal + Business context.
+4. Workspace switching works without logout.
+5. Onboarding is complete.
+6. Voice name entry is implemented or honestly BLOCKED.
+7. Voice-to-text/translation is implemented or honestly BLOCKED.
+8. OPPA ID functionality is implemented or honestly BLOCKED.
+9. Messaging works with offline/reconnect behaviour.
+10. Wallet/payment flows are integrated and financially safe.
+11. Business/order/customer/staff workflows work.
+12. Notifications work with correct workspace context.
+13. Security/device/session UI works.
+14. Calls are honestly implemented/scoped.
+15. Live database is verified where credentials/environment permit.
+16. Android is verified where tooling/device permits.
+17. Visual QA has been performed where a running app can be viewed.
+18. Adversarial security testing is complete.
+19. No critical/high unresolved security defect remains.
+20. Every external blocker is documented.
+21. `CODEX_HANDOFF.md` contains the exact final state.
+
+**Do not stop after the first successful stage. Execute the entire task chain.**
+
+---
+
+## Final command to the agent
+
+**Inspect first. Plan from the actual repository. Fix architecture where required. Implement missing functionality. Integrate it with the real backend. Test it. Attack it. Build Android where possible. Visually compare it to the supplied UI. Continue through every remaining task until genuine V1 completion or a real external blocker prevents further progress. Do not merely report what should be done — do the work.**
