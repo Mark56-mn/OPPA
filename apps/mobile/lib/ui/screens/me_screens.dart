@@ -1,8 +1,10 @@
 import "package:flutter/material.dart";
+import "package:flutter/services.dart" show FilteringTextInputFormatter;
 
 import "../../core/connectivity_service.dart";
 import "../../core/screen_data.dart";
 import "../../core/session_store.dart";
+import "../../core/voice_service.dart";
 import "../../data/repositories.dart";
 import "../../design/oppa_themes.dart";
 import "../widgets/common.dart";
@@ -32,6 +34,10 @@ class MeScreen extends StatefulWidget {
 class _MeScreenState extends State<MeScreen> {
   final _name = TextEditingController();
   final _about = TextEditingController();
+  final _oppaId = TextEditingController();
+  String? _currentOppaId;
+  String? _oppaIdMessage;
+  bool _oppaIdBusy = false;
   dynamic _state = const ViewLoading();
 
   @override
@@ -44,6 +50,7 @@ class _MeScreenState extends State<MeScreen> {
   void dispose() {
     _name.dispose();
     _about.dispose();
+    _oppaId.dispose();
     super.dispose();
   }
 
@@ -54,10 +61,54 @@ class _MeScreenState extends State<MeScreen> {
       final p = (response.body as Map).cast<String, dynamic>();
       _name.text = "${p["displayName"] ?? ""}";
       _about.text = "${p["about"] ?? ""}";
+      _currentOppaId = p["oppaId"] as String?;
+      _oppaId.text = _currentOppaId ?? "";
     }
     setState(() => _state = response.isSuccess
         ? const ViewReady<Map>({}, fromCache: false)
         : ViewError(response.errorCode ?? "Could not load profile"));
+  }
+
+  /// Claims or changes the OPPA ID. The server owns the rules; this only
+  /// pre-checks availability for honest inline feedback, then submits.
+  Future<void> _saveOppaId() async {
+    final id = _oppaId.text.trim().toLowerCase();
+    if (id == _currentOppaId) {
+      setState(() => _oppaIdMessage = "That is your current OPPA ID");
+      return;
+    }
+    setState(() => _oppaIdBusy = true);
+    final check = await widget.profiles.oppaIdAvailable(id);
+    if (!mounted) return;
+    if (check.isSuccess) {
+      final available = ((check.body as Map?)?["available"] as bool?) ?? false;
+      if (!available) {
+        setState(() {
+          _oppaIdBusy = false;
+          _oppaIdMessage = "That OPPA ID is taken — try another";
+        });
+        return;
+      }
+    }
+    final r = await widget.profiles.setOppaId(id);
+    if (!mounted) return;
+    setState(() {
+      _oppaIdBusy = false;
+      _oppaIdMessage = r.isSuccess
+          ? "OPPA ID saved — people can find you as $id"
+          : switch (r.errorCode) {
+              "OPPA_ID_TAKEN" => "That OPPA ID is taken — try another",
+              "OPPA_ID_RESERVED" => "That name is reserved — try another",
+              "OPPA_ID_INVALID" =>
+                "Use 3–32 letters, numbers or _ starting with a letter",
+              "OPPA_ID_CHANGE_RATE_LIMITED" =>
+                "Too many changes — try again in an hour",
+              _ => r.errorCode ?? "Could not save OPPA ID",
+            };
+    });
+    if (r.isSuccess) {
+      setState(() => _currentOppaId = id);
+    }
   }
 
   Future<void> _save() async {
@@ -95,6 +146,47 @@ class _MeScreenState extends State<MeScreen> {
           ),
           const SizedBox(height: 12),
           FilledButton(onPressed: _save, child: const Text("Save profile")),
+          const SizedBox(height: 24),
+          Text("OPPA ID", style: theme.textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            "Your unique name on OPPA — people find and add you with it.",
+            style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _oppaId,
+            maxLength: 32,
+            enabled: !_oppaIdBusy,
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp("[a-zA-Z0-9_]")),
+            ],
+            decoration: InputDecoration(
+              labelText: _currentOppaId == null
+                  ? "Choose your OPPA ID"
+                  : "Your OPPA ID",
+              prefixText: "oppa.com/ ",
+              helperText: "3–32 characters, starts with a letter",
+            ),
+          ),
+          if (_oppaIdMessage != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(_oppaIdMessage!,
+                  style: theme.textTheme.bodySmall),
+            ),
+          const SizedBox(height: 8),
+          OutlinedButton(
+            onPressed: _oppaIdBusy ? null : _saveOppaId,
+            child: _oppaIdBusy
+                ? const SizedBox(
+                    width: 18, height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2))
+                : Text(_currentOppaId == null
+                    ? "Claim OPPA ID"
+                    : "Change OPPA ID"),
+          ),
           const SizedBox(height: 24),
           Text("Appearance", style: theme.textTheme.titleMedium),
           const SizedBox(height: 8),
@@ -214,8 +306,7 @@ class _BusinessScreenState extends State<BusinessScreen> {
   }
 
   Future<void> _onboard() async {
-    final name = await _prompt("Store name",
-        hint: "e.g. Kano Spices", max: 120);
+    final name = await _promptBusinessName();
     if (name == null || !mounted) return;
     final response = await widget.business.create(name: name);
     if (!mounted) return;
@@ -226,31 +317,11 @@ class _BusinessScreenState extends State<BusinessScreen> {
     if (response.isSuccess) _load();
   }
 
-  Future<String?> _prompt(String label, {String? hint, int max = 120}) {
-    final controller = TextEditingController();
-    return showDialog<String>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(label),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLength: max,
-          decoration: InputDecoration(hintText: hint),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-          FilledButton(
-              onPressed: () {
-                final v = controller.text.trim();
-                if (v.isEmpty) return;
-                Navigator.pop(context, v);
-              },
-              child: const Text("Save")),
-        ],
-      ),
-    );
+  /// Voice-assisted onboarding (approved UI: "Type ⌨ | 🎙 Speak"). Sellers
+  /// who cannot spell their store name can say it, check the transcription,
+  /// edit it, and confirm. Mirrors the consumer voice-name flow.
+  Future<String?> _promptBusinessName() {
+    return showDialog<String>(context: context, builder: (_) => const _BusinessNameDialog());
   }
 
   @override
@@ -336,6 +407,146 @@ class _BusinessCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// Voice-assisted business onboarding: Type ⌨ / 🎙 Speak, editable
+/// transcription, spoken read-back, confirm. The editable field is the
+/// point — speech recognition is imperfect and the seller must be able to
+/// fix what was heard before their store is created.
+class _BusinessNameDialog extends StatefulWidget {
+  const _BusinessNameDialog();
+
+  @override
+  State<_BusinessNameDialog> createState() => _BusinessNameDialogState();
+}
+
+class _BusinessNameDialogState extends State<_BusinessNameDialog> {
+  final _voice = VoiceService.instance;
+  final _nameController = TextEditingController();
+  bool _voiceMode = true;
+  bool _listening = false;
+
+  @override
+  void dispose() {
+    if (_listening) _voice.stopListening();
+    _voice.stopSpeaking();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggleListen() async {
+    if (_listening) {
+      await _voice.stopListening();
+      if (mounted) setState(() => _listening = false);
+      return;
+    }
+    final locale = voiceLocales["en"] ?? "en-US";
+    final started = await _voice.startListening(
+      localeId: locale,
+      timeout: const Duration(seconds: 8),
+      onPartial: (text) {
+        if (mounted) _nameController.text = text;
+      },
+      onFinal: (text) {
+        if (!mounted) return;
+        setState(() {
+          _listening = false;
+          _nameController.text = text;
+        });
+        // Read it back so the seller confirms what was heard.
+        _voice.speak(text, languageTag: locale);
+      },
+    );
+    if (!mounted) return;
+    setState(() => _listening = started);
+    if (!started) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text(
+              "Voice input is not available on this device — type your store name instead")));
+      setState(() => _voiceMode = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: const Text("Name your business"),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text("What is your store called?",
+              style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.7))),
+          const SizedBox(height: 16),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(
+                  value: false,
+                  icon: Icon(Icons.keyboard_alt_outlined),
+                  label: Text("Type")),
+              ButtonSegment(
+                  value: true, icon: Icon(Icons.mic_rounded), label: Text("Speak")),
+            ],
+            selected: {_voiceMode},
+            onSelectionChanged: (s) => setState(() => _voiceMode = s.first),
+          ),
+          const SizedBox(height: 16),
+          if (_voiceMode) ...[
+            Center(
+              child: GestureDetector(
+                onTap: _toggleListen,
+                child: CircleAvatar(
+                  radius: 32,
+                  backgroundColor: _listening
+                      ? theme.colorScheme.primary.withValues(alpha: 0.2)
+                      : theme.colorScheme.surfaceContainerHighest,
+                  child: Icon(
+                    _listening ? Icons.stop : Icons.mic_rounded,
+                    size: 30,
+                    color: _listening ? theme.colorScheme.primary : null,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _listening
+                  ? "Listening… say your store name"
+                  : "Tap to speak your store name",
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+          ],
+          TextField(
+            controller: _nameController,
+            maxLength: 120,
+            enabled: !_listening,
+            autofocus: !_voiceMode,
+            textCapitalization: TextCapitalization.words,
+            decoration: InputDecoration(
+              labelText: _voiceMode ? "Check and edit the name" : "Store name",
+              helperText: _voiceMode ? "Is this right? Tap to correct it" : null,
+              hintText: "e.g. Kano Spices",
+            ),
+            onChanged: (_) => setState(() {}),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+        FilledButton(
+          onPressed: _listening || _nameController.text.trim().isEmpty
+              ? null
+              : () => Navigator.pop(context, _nameController.text.trim()),
+          child: const Text("Create store"),
+        ),
+      ],
     );
   }
 }

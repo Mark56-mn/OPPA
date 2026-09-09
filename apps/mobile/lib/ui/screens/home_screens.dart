@@ -16,11 +16,13 @@ class HomeScreen extends StatefulWidget {
     required this.contacts,
     required this.conversations,
     required this.business,
+    required this.profiles,
     required this.connectivity,
     required this.onOpenNotifications,
     required this.onOpenSupport,
     required this.onOpenTranslator,
     required this.onOpenSettings,
+    required this.onOpenWorkspaceSwitcher,
   });
 
   final SessionStore session;
@@ -29,11 +31,13 @@ class HomeScreen extends StatefulWidget {
   final ContactsRepository contacts;
   final ConversationsRepository conversations;
   final BusinessRepository business;
+  final ProfileRepository profiles;
   final ConnectivityService connectivity;
   final VoidCallback onOpenNotifications;
   final VoidCallback onOpenSupport;
   final VoidCallback onOpenTranslator;
   final VoidCallback onOpenSettings;
+  final VoidCallback onOpenWorkspaceSwitcher;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -48,7 +52,8 @@ class _HomeScreenState extends State<HomeScreen> {
         builder: (_) => ConnectScreen(
             contacts: widget.contacts,
             conversations: widget.conversations,
-            business: widget.business)));
+            business: widget.business,
+            profiles: widget.profiles)));
   }
 
   @override
@@ -91,6 +96,12 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text("OPPA"),
         actions: [
+          // Workspace switcher: Personal ↔ Business without logout.
+          IconButton(
+            tooltip: "Switch workspace",
+            onPressed: widget.onOpenWorkspaceSwitcher,
+            icon: const Icon(Icons.swap_horiz_outlined),
+          ),
           IconButton(
             onPressed: widget.onOpenNotifications,
             icon: Badge(
@@ -245,11 +256,13 @@ class ConnectScreen extends StatefulWidget {
     required this.contacts,
     required this.conversations,
     required this.business,
+    required this.profiles,
   });
 
   final ContactsRepository contacts;
   final ConversationsRepository conversations;
   final BusinessRepository business;
+  final ProfileRepository profiles;
 
   @override
   State<ConnectScreen> createState() => _ConnectScreenState();
@@ -293,9 +306,31 @@ class _ConnectScreenState extends State<ConnectScreen> {
     });
   }
 
+  /// Accepts a user id, phone number, or an OPPA ID handle (@name or bare).
+  /// Handles are resolved through the server's public lookup before adding.
   Future<void> _add() async {
-    final userId = _addController.text.trim();
-    if (userId.isEmpty) return;
+    final raw = _addController.text.trim();
+    if (raw.isEmpty) return;
+    var userId = raw;
+    final handle = raw.startsWith("@")
+        ? raw.substring(1).trim()
+        : RegExp(r'^[a-z][a-z0-9_]{2,31}$').hasMatch(raw)
+            ? raw
+            : null;
+    if (handle != null) {
+      final lookup = await widget.profiles.findByOppaId(handle);
+      final body = (lookup.isSuccess ? lookup.body as Map? : null);
+      final resolved = body?["userId"] as String?;
+      if (!mounted) return;
+      if (resolved == null) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(lookup.errorCode == "PROFILE_OPPA_ID_NOT_FOUND"
+                ? "No one uses that OPPA ID yet"
+                : "Could not resolve that OPPA ID")));
+        return;
+      }
+      userId = resolved;
+    }
     final r = await widget.contacts.add(userId);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -387,7 +422,8 @@ class _ConnectScreenState extends State<ConnectScreen> {
                   child: TextField(
                     controller: _addController,
                     decoration: const InputDecoration(
-                        labelText: "Add by user id"),
+                        labelText: "Add by OPPA ID, phone or user id",
+                        helperText: "e.g. @emeka_01"),
                     maxLength: 128,
                   ),
                 ),
@@ -407,7 +443,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
                     ? StateViews.error(_error!, onRetry: _load)
                     : _contacts.isEmpty
                         ? const StateViews.empty(
-                            "No contacts yet — add someone by their user id")
+                            "No contacts yet — add someone by their OPPA ID")
                         : RefreshIndicator(
                             onRefresh: _load,
                             child: ListView(

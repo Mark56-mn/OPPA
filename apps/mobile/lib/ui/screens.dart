@@ -6,6 +6,7 @@ import "../core/session_store.dart";
 import "../data/repositories.dart";
 import "../design/oppa_themes.dart";
 import "widgets/common.dart";
+import "screens/business_app.dart";
 import "screens/chat_screens.dart";
 import "screens/home_screens.dart";
 import "screens/me_screens.dart";
@@ -17,8 +18,10 @@ import "screens/wallet_screens.dart";
 export "screens/auth_gate.dart";
 
 /// Bottom navigation shell implementing the V1 information architecture:
-/// Home / Chats / Wallet / Business / Me — with Calls reachable from any chat,
-/// Connect and Support from Home, theme and security from Me.
+/// Personal workspace tabs — Home / Chats / Wallet / Me. Business is NOT a
+/// personal tab: it is a separate workspace opened through the workspace
+/// switcher (one OPPA identity, Personal + Business workspaces, no logout
+/// needed to switch).
 class HomeShell extends StatelessWidget {
   const HomeShell({
     super.key,
@@ -59,7 +62,7 @@ class HomeShell extends StatelessWidget {
       stream: connectivity.stream,
       builder: (context, _) {
         return DefaultTabController(
-          length: 5,
+          length: 4,
           child: Scaffold(
             body: StreamBuilder<int>(
               stream: queue.depthStream,
@@ -82,6 +85,7 @@ class HomeShell extends StatelessWidget {
                         contacts: contacts,
                         conversations: conversations,
                         business: business,
+                        profiles: profiles,
                         connectivity: connectivity,
                         onOpenNotifications: () => Navigator.of(context).push(
                             MaterialPageRoute(
@@ -102,6 +106,11 @@ class HomeShell extends StatelessWidget {
                                     connectivity: connectivity,
                                     themeId: themeId,
                                     onThemeChanged: onThemeChanged))),
+                        onOpenWorkspaceSwitcher: () => showWorkspaceSwitcher(
+                            context,
+                            session: session,
+                            business: business,
+                            connectivity: connectivity),
                       ),
                       ChatsScreen(
                         conversations: conversations,
@@ -118,9 +127,6 @@ class HomeShell extends StatelessWidget {
                           wallet: wallet,
                           session: session,
                           connectivity: connectivity),
-                      BusinessScreen(
-                          session: session,
-                          business: business, connectivity: connectivity),
                       MeScreen(
                           session: session,
                           profiles: profiles,
@@ -137,13 +143,206 @@ class HomeShell extends StatelessWidget {
                 Tab(icon: Icon(Icons.home_outlined), text: "Home"),
                 Tab(icon: Icon(Icons.chat_bubble_outline), text: "Chats"),
                 Tab(icon: Icon(Icons.account_balance_wallet_outlined), text: "Wallet"),
-                Tab(icon: Icon(Icons.storefront_outlined), text: "Business"),
                 Tab(icon: Icon(Icons.person_outline), text: "Me"),
               ],
             ),
           ),
         );
       },
+    );
+  }
+}
+
+/// Workspace switcher (required product architecture): one OPPA identity →
+/// Personal workspace + zero or more Business workspaces. Shows
+///   `Your Name — Personal`
+///   `Business Name — Owner/Manager/Staff`
+///   `+ Create a Business`
+/// Switching never logs the user out; the Business workspace replaces the
+/// navigation context until the user switches back.
+Future<void> showWorkspaceSwitcher(
+  BuildContext context, {
+  required SessionStore session,
+  required BusinessRepository business,
+  required ConnectivityService connectivity,
+}) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (sheetContext) => _WorkspaceSwitcherSheet(
+      business: business,
+      session: session,
+      connectivity: connectivity,
+    ),
+  );
+}
+
+class _WorkspaceSwitcherSheet extends StatefulWidget {
+  const _WorkspaceSwitcherSheet({
+    required this.business,
+    required this.session,
+    required this.connectivity,
+  });
+
+  final BusinessRepository business;
+  final SessionStore session;
+  final ConnectivityService connectivity;
+
+  void openBusiness(BuildContext context, {required String id, required String name}) {
+    Navigator.of(context).pop();
+    Navigator.of(context, rootNavigator: true).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => BusinessApp(
+          session: session,
+          business: business,
+          connectivity: connectivity,
+          initialBusinessId: id,
+          initialBusinessName: name,
+        ),
+      ),
+    );
+  }
+
+  @override
+  State<_WorkspaceSwitcherSheet> createState() =>
+      _WorkspaceSwitcherSheetState();
+}
+
+class _WorkspaceSwitcherSheetState extends State<_WorkspaceSwitcherSheet> {
+  List<Map> _businesses = const [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final r = await widget.business.listMine();
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _businesses = r.isSuccess
+          ? (((r.body as Map?)?["businesses"] as List?) ?? const [])
+              .whereType<Map>()
+              .map((e) => e.cast<String, dynamic>())
+              .toList()
+          : const [];
+      if (!r.isSuccess) _error = r.errorCode;
+    });
+  }
+
+  Future<void> _createBusiness() async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        final controller = TextEditingController();
+        return AlertDialog(
+          title: const Text("Create a business"),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            maxLength: 120,
+            decoration: const InputDecoration(
+                hintText: "e.g. Mama's Kitchen",
+                helperText: "You can change details later"),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel")),
+            FilledButton(
+                onPressed: () {
+                  final v = controller.text.trim();
+                  if (v.isEmpty) return;
+                  Navigator.pop(context, v);
+                },
+                child: const Text("Create")),
+          ],
+        );
+      },
+    );
+    if (name == null || !mounted) return;
+    final r = await widget.business.create(name: name);
+    if (!mounted) return;
+    if (r.isSuccess) {
+      widget.openBusiness(context,
+          id: "${(r.body as Map)["id"] ?? ""}", name: name);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(r.errorCode ?? "Could not create the business")));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text("Switch workspace",
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 4),
+            Text("Your Personal and Business spaces stay separate.",
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+            const SizedBox(height: 16),
+            Card(
+              child: ListTile(
+                leading: const Icon(Icons.person_outline),
+                title: const Text("Personal"),
+                subtitle: const Text("Chats, wallet, calls, settings"),
+                trailing: const Icon(Icons.check, color: Colors.green),
+                onTap: () => Navigator.pop(context),
+              ),
+            ),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator()),
+              ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Column(children: [
+                  StateViews.error(_error!, onRetry: _load),
+                ]),
+              ),
+            for (final b in _businesses)
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.storefront_outlined),
+                  title: Text("${b["name"] ?? "Business"}"),
+                  subtitle: const Text("Business workspace"),
+                  onTap: () => widget.openBusiness(context,
+                      id: "${b["id"] ?? ""}",
+                      name: "${b["name"] ?? "Business"}"),
+                ),
+              ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _createBusiness,
+              icon: const Icon(Icons.add_business),
+              label: const Text("Create a Business"),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

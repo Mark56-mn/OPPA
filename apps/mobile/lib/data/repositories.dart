@@ -1,7 +1,8 @@
 import "../core/api_client.dart";
 import "../core/outbound_queue.dart";
 
-/// Profile (display name, about, avatar). Server validates lengths.
+/// Profile (display name, about, avatar, OPPA ID). Server validates lengths
+/// and owns all OPPA ID rules (shape, reserved names, uniqueness).
 class ProfileRepository {
   ProfileRepository(this._api);
   final ApiClient _api;
@@ -13,6 +14,19 @@ class ProfileRepository {
         if (about != null) "about": about,
         if (avatarUrl != null) "avatarUrl": avatarUrl,
       });
+
+  /// Server answers availability for a proposed handle. Never reveals who
+  /// holds a taken id.
+  Future<ApiResponse> oppaIdAvailable(String id) =>
+      _api.get("/profile/oppa-id/available/$id");
+
+  /// Claims or changes the caller's OPPA ID (rate-limited server-side).
+  Future<ApiResponse> setOppaId(String id) =>
+      _api.post("/profile/oppa-id", body: {"oppaId": id});
+
+  /// Public lookup for Connect — minimal identity only.
+  Future<ApiResponse> findByOppaId(String id) =>
+      _api.get("/profile/oppa-id/lookup/$id");
 }
 
 /// Contacts with block/report (support surface).
