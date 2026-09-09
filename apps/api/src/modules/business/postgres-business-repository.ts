@@ -293,9 +293,9 @@ export class PostgresBusinessRepository {
       for (const item of input.items) {
         const product = priceById.get(item.productId)!;
         await client.query(
-          `insert into public.oppa_business_order_items(order_id,product_id,quantity,unit_price_minor)
-           values($1,$2,$3,$4)`,
-          [order.rows[0].id, item.productId, item.quantity, product.priceMinor]
+          `insert into public.oppa_business_order_items(order_id,business_id,product_id,quantity,unit_price_minor)
+           values($1,$2,$3,$4,$5)`,
+          [order.rows[0].id, businessId, item.productId, item.quantity, product.priceMinor]
         );
       }
       await client.query(

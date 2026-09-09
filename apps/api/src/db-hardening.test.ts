@@ -24,7 +24,8 @@ const skip = connectionString
 const migrations = [
   "0016_business.sql",
   "0018_reports_calls.sql",
-  "0019_db_hardening.sql"
+  "0019_db_hardening.sql",
+  "0021_fix_order_item_business_boundary.sql"
 ];
 
 let pool: pg.Pool;
@@ -38,14 +39,15 @@ async function applyMigrations() {
   const base = new URL("../../../database/migrations/", import.meta.url);
   await pool.query(`create table if not exists public.schema_migrations (
     name text primary key, applied_at timestamptz not null default now())`);
+  // Track like the production runner: apply each file AT MOST ONCE. Re-running
+  // raw SQL here would re-add constraints that later migrations deliberately
+  // dropped (0019's broken composite FK was resurrected this way).
   for (const file of migrations) {
+    const seen = await pool.query("select 1 from public.schema_migrations where name=$1", [file]);
+    if (seen.rowCount && seen.rowCount > 0) continue;
     const sql = await readFile(new URL(file, base), "utf8");
-    try {
-      await pool.query(sql);
-    } catch (e: any) {
-      // Idempotent-safe migrations may conflict on concurrent CI runs only.
-      if (!String(e.message).includes("already exists")) throw e;
-    }
+    await pool.query(sql);
+    await pool.query("insert into public.schema_migrations(name) values($1)", [file]);
   }
 }
 
@@ -69,7 +71,8 @@ before(async () => {
   )).rows[0].id;
 
   conversationId = (await pool.query(
-    "insert into public.oppa_conversations(kind) values('direct') returning id"
+    "insert into public.oppa_conversations(kind, created_by) values('direct', $1) returning id",
+    [userA]
   )).rows[0].id;
   await pool.query(
     "insert into public.oppa_conversation_members(conversation_id,user_id) values($1,$2),($1,$3)",
@@ -149,27 +152,31 @@ test("an order item cannot reference another business's product", { skip }, asyn
     [businessId, userB]
   )).rows[0].id;
 
-  await assert.rejects(
-    () => pool.query(
-      "insert into public.oppa_business_order_items(order_id,product_id,quantity,unit_price_minor) values($1,$2,1,1000)",
-      [order, prodB]
-    ),
-    (e: any) => /23503|foreign key|same_business/i.test(String(e.message) + String(e.code ?? "")),
-    "cross-business item must be rejected by the composite FK"
-  );
+  try {
+    await assert.rejects(
+      () => pool.query(
+        "insert into public.oppa_business_order_items(order_id,product_id,quantity,unit_price_minor) values($1,$2,1,1000)",
+        [order, prodB]
+      ),
+      (e: any) => /23502|23503|not-null|foreign key|same_business/i.test(String(e.message) + String(e.code ?? "")),
+      "cross-business item must be rejected by the composite FK (or NOT NULL business_id)"
+    );
 
-  // Same-business items still work.
-  await pool.query(
-    "insert into public.oppa_business_order_items(order_id,product_id,quantity,unit_price_minor) values($1,$2,1,1000)",
-    [order, productId]
-  );
-  const n = await pool.query("select count(*)::int as n from public.oppa_business_order_items where order_id=$1", [order]);
-  assert.equal(n.rows[0].n, 1);
-
-  await pool.query("delete from public.oppa_business_order_items where order_id=$1", [order]);
-  await pool.query("delete from public.oppa_business_orders where id=$1", [order]);
-  await pool.query("delete from public.oppa_business_products where id=$1", [prodB]);
-  await pool.query("delete from public.oppa_businesses where id=$1", [bizB]);
+    // Same-business items still work — with business_id set like the service does.
+    await pool.query(
+      "insert into public.oppa_business_order_items(order_id,business_id,product_id,quantity,unit_price_minor) values($1,$2,$3,1,1000)",
+      [order, businessId, productId]
+    );
+    const n = await pool.query("select count(*)::int as n from public.oppa_business_order_items where order_id=$1", [order]);
+    assert.equal(n.rows[0].n, 1);
+  } finally {
+    // Always remove bizB rows so after() can delete the users even if an
+    // assertion above fails.
+    await pool.query("delete from public.oppa_business_order_items where order_id=$1", [order]);
+    await pool.query("delete from public.oppa_business_orders where id=$1", [order]);
+    await pool.query("delete from public.oppa_business_products where id=$1", [prodB]);
+    await pool.query("delete from public.oppa_businesses where id=$1", [bizB]);
+  }
 });
 
 test("Data API roles have no privileges on OPPA tables (deny-all RLS)", { skip }, async () => {

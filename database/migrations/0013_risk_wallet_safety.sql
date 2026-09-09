@@ -32,9 +32,12 @@ create table if not exists public.oppa_risk_decisions (
   created_by uuid references public.oppa_users(id) on delete set null,
   created_at timestamptz not null default now()
 );
+-- Plain composite index (not partial): a partial predicate using now() is
+-- both disallowed (non-immutable) and semantically wrong — index membership
+-- would be frozen at insert time. The active-decision query filters
+-- expires_at after the index lookup.
 create index if not exists oppa_risk_decisions_active_idx
-  on public.oppa_risk_decisions(user_id, scope)
-  where expires_at is null or expires_at > now();
+  on public.oppa_risk_decisions(user_id, scope);
 
 -- Per-user transfer limits (minor units / NGN). Defaults apply when no row
 -- exists; operators tune per user via the Control Center.

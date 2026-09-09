@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const migrationsDir = join(here, "../../../database/migrations");
+const migrationsDir = join(here, "../../../../database/migrations");
 
 async function main() {
   const connectionString = process.env.DATABASE_URL;
