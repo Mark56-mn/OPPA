@@ -10,7 +10,11 @@ import { AuthService } from "./modules/auth/auth-service.js";
 import { PostgresIdentityRepository } from "./modules/identity/postgres-identity-repository.js";
 import { PostgresOtpRepository } from "./modules/otp/postgres-otp-repository.js";
 import { OtpService } from "./modules/otp/otp-service.js";
-import { BulkSmsProvider } from "./modules/sms/bulksms-provider.js";
+import { FailoverSmsGateway } from "./modules/sms/sms-gateway.js";
+import { PostgresSmsAttemptRepository } from "./modules/sms/postgres-sms-attempt-repository.js";
+import { SmsDeliveryRecorder } from "./modules/sms/sms-delivery-recorder.js";
+import { createSmsCallbackRouter } from "./modules/sms/sms-callback-routes.js";
+import { describeConfig, smsProviderOrder } from "./config/env.js";
 import { PostgresSessionRepository } from "./modules/session/postgres-session-repository.js";
 import { SessionService } from "./modules/session/session-service.js";
 import { DeviceService } from "./modules/device/device-service.js";
@@ -75,7 +79,17 @@ if (authConfig.every(Boolean)) {
   const devices = new DeviceService(new PostgresDeviceRepository());
   const riskRepository = new PostgresRiskRepository();
   const risk = new RiskService(riskRepository);
-  const otp = new OtpService(new PostgresOtpRepository(), new BulkSmsProvider(), requiredEnv("OPPA_OTP_PEPPER"), env.bulkSmsSenderId, env.bulkSmsCallbackUrl, risk);
+  // SMS failover: BulkSMS primary, Termii fallback, per config order. Every
+  // attempt is persisted; the OTP challenge is shared across provider failover.
+  // With no provider configured the gateway fails closed (SMS_GATEWAY_UNCONFIGURED).
+  const smsAttempts = new PostgresSmsAttemptRepository();
+  const sms = FailoverSmsGateway.fromConfig(smsAttempts);
+  const otp = new OtpService(
+    new PostgresOtpRepository(),
+    sms.gateway ?? new FailoverSmsGateway([], smsAttempts),
+    requiredEnv("OPPA_OTP_PEPPER"),
+    risk
+  );
   const sessions = new SessionService(sessionRepository, requiredEnv("OPPA_REFRESH_TOKEN_PEPPER"), requiredEnv("OPPA_ACCESS_TOKEN_SECRET"));
   const auth = new AuthService(otp, new PostgresIdentityRepository(), sessions, devices, new PostgresSecurityEventRecorder());
 
@@ -125,12 +139,22 @@ if (authConfig.every(Boolean)) {
   protectedRouter.use("/wallet", createWalletRouter(new PostgresWalletRepository(), new PostgresWalletTransferRepository(riskRepository), sensitiveAuthorization));
 
   const providers:any = {};
-  if (env.paystackSecret) providers.paystack = new PaystackProvider(env.paystackSecret);
-  if (env.flutterwaveSecret && env.flutterwaveWebhookSecret) providers.flutterwave = new FlutterwaveProvider(env.flutterwaveSecret, env.flutterwaveWebhookSecret);
+  if (env.paystackSecret) providers.paystack = new PaystackProvider(env.paystackSecret, { baseUrl: env.paystackBaseUrl });
+  if (env.flutterwaveSecret && env.flutterwaveWebhookSecret) providers.flutterwave = new FlutterwaveProvider(env.flutterwaveSecret, env.flutterwaveWebhookSecret, { baseUrl: env.flutterwaveBaseUrl, encryptionKey: env.flutterwaveEncryptionKey });
   const paymentRepository = new PostgresPaymentRepository();
   const payments = new PaymentService(paymentRepository, providers, sensitiveAuthorization, risk);
   protectedRouter.use("/payments", createPaymentRouter(payments, paymentRepository));
   app.use("/v1/payments/webhooks", createPaymentWebhookRouter(payments));
+
+  // SMS delivery callbacks (provider -> OPPA). Unauthenticated by design for
+  // providers without signing; strictly validated and bounded to the DLR ledger.
+  app.use("/v1/sms/webhooks", createSmsCallbackRouter(new SmsDeliveryRecorder(smsAttempts)));
+
+  // Configuration introspection for deployment checks. Reports variable NAMES
+  // and presence only — never values.
+  app.get("/v1/config/providers", (_req, res) => {
+    res.status(200).json({ providers: describeConfig(), sms: { order: smsProviderOrder(), mode: sms.mode } });
+  });
   app.use("/v1", protectedRouter);
 }
 

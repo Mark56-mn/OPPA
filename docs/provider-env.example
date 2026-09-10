@@ -1,0 +1,39 @@
+# Copy to your deployment environment (Render) — never commit filled values.
+# NOTE: intentionally lives in docs/ so no tooling auto-loads this file.
+
+# ---- Core ----
+DATABASE_URL=
+OPPA_ACCESS_TOKEN_SECRET=
+OPPA_REFRESH_TOKEN_PEPPER=
+OPPA_OTP_PEPPER=
+
+# ---- BulkSMS Nigeria (SMS/OTP; API v2) ----
+BULKSMS_BASE_URL=https://www.bulksmsnigeria.com
+BULKSMS_API_TOKEN=
+BULKSMS_SENDER_ID=OPPA
+# Webhook: https://api.oppa-technologies.online/v1/sms/webhooks/bulksms
+BULKSMS_CALLBACK_URL=
+
+# ---- Termii (SMS/OTP fallback; account-specific base URL from dashboard) ----
+TERMII_BASE_URL=
+TERMII_API_KEY=
+TERMII_SENDER_ID=OPPA
+# Only when Termii events are enabled on the dashboard:
+TERMII_CALLBACK_URL=
+TERMII_WEBHOOK_SECRET=
+
+# ---- Paystack ----
+PAYSTACK_SECRET_KEY=
+PAYSTACK_PUBLIC_KEY=
+
+# ---- Flutterwave V3 (do not use V4/OAuth credentials) ----
+FLUTTERWAVE_SECRET_KEY=
+FLUTTERWAVE_PUBLIC_KEY=
+FLUTTERWAVE_ENCRYPTION_KEY=
+FLUTTERWAVE_WEBHOOK_SECRET=
+
+# ---- SMS failover behavior (optional; sane defaults) ----
+# bulksms | termii
+SMS_PRIMARY_PROVIDER=bulksms
+SMS_SEND_TIMEOUT_MS=8000
+SMS_MAX_ATTEMPTS_PER_MINUTE=4

@@ -48,7 +48,10 @@ const statuses: Record<string, number> = {
   CONTACT_REPORT_REASON_INVALID: 400, REPORT_ID_INVALID: 404,
   REPORT_STATUS_INVALID: 400, REPORT_PAGINATION_INVALID: 400,
   OPPA_ID_INVALID: 400, OPPA_ID_RESERVED: 409, OPPA_ID_TAKEN: 409,
-  OPPA_ID_NOT_FOUND: 404, OPPA_ID_CHANGE_RATE_LIMITED: 429
+  OPPA_ID_NOT_FOUND: 404, OPPA_ID_CHANGE_RATE_LIMITED: 429,
+  SMS_DELIVERY_FAILED: 502, SMS_GATEWAY_UNCONFIGURED: 503,
+  SMS_CALLBACK_INVALID: 400, SMS_CALLBACK_UNAUTHORIZED: 401,
+  SMS_ATTEMPT_BUDGET_EXCEEDED: 429, PAYMENT_REFERENCE_MISMATCH: 409
 };
 
 export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
@@ -57,7 +60,11 @@ export const errorHandler: ErrorRequestHandler = (error, _req, res, _next) => {
     code: typeof error?.message === "string" ? error.message : "INTERNAL_SERVER_ERROR"
   });
   if (res.headersSent) return;
+  // Body-parser failures (malformed JSON, oversized bodies) carry their own
+  // HTTP status; honor it instead of masking client errors as 500.
+  const parserStatus = typeof (error as any)?.status === "number" && (error as any).status >= 400 && (error as any).status < 500
+    ? (error as any).status : undefined;
   const code = typeof error?.message === "string" && statuses[error.message]
     ? error.message : "INTERNAL_SERVER_ERROR";
-  res.status(statuses[code] ?? 500).json({ error: code, requestId: res.locals.requestId });
+  res.status(parserStatus ?? statuses[code] ?? 500).json({ error: code, requestId: res.locals.requestId });
 };

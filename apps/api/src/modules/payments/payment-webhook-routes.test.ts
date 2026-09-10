@@ -203,7 +203,7 @@ test("cross-provider confusion: paystack reference posted to flutterwave endpoin
   const good = provider();
   const srv = await listen(appWith({ paystack: good, flutterwave: good }, r));
   try {
-    const res = await post(srv.url, "/webhooks/payments/flutterwave", JSON.stringify({ event: "charge.success", data: { tx_ref: "OPPA_1" } }), { "verif-hash": "sig" });
+    const res = await post(srv.url, "/webhooks/payments/flutterwave", JSON.stringify({ event: "charge.completed", data: { tx_ref: "OPPA_1" } }), { "verif-hash": "sig" });
     // The provider-scoped lookup (where provider=$1 and reference=$2) finds
     // nothing on the flutterwave path: PAYMENT_NOT_FOUND, no credit.
     assert.equal(res.status, 404);

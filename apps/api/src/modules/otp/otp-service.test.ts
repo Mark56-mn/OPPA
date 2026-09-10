@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import test from "node:test";
 import { OtpService } from "./otp-service.js";
 import type { OtpChallenge, OtpRepository } from "./otp-repository.js";
-import type { SendSmsInput, SendSmsResult, SmsProvider } from "../sms/types.js";
+import type { NormalizedSmsResult, SendSmsInput, SmsProvider } from "../sms/types.js";
 
 class MemoryOtpRepository implements OtpRepository {
   rows: OtpChallenge[] = [];
@@ -26,16 +26,17 @@ class MemoryOtpRepository implements OtpRepository {
 class CapturingSms implements SmsProvider {
   readonly name = "test-provider";
   sent: SendSmsInput[] = [];
-  async send(input: SendSmsInput): Promise<SendSmsResult> {
+  result: NormalizedSmsResult = { provider: "test-provider", outcome: "accepted", providerMessageId: "msg-1" };
+  async send(input: SendSmsInput): Promise<NormalizedSmsResult> {
     this.sent.push(input);
-    return { provider: this.name, providerMessageId: "msg-1", status: "submitted" };
+    return this.result;
   }
 }
 
 test("OTP is never returned by request", async () => {
   const repo = new MemoryOtpRepository();
   const sms = new CapturingSms();
-  const service = new OtpService(repo, sms, "pepper", "OPPA");
+  const service = new OtpService(repo, sms, "pepper");
   const result = await service.request("+2348012345678", new Date("2026-01-01T00:00:00Z"));
   assert.ok(result.challengeId);
   assert.equal("otp" in result, false);
@@ -47,7 +48,7 @@ test("records an OTP abuse event when rate limited", async () => {
   const sms = new CapturingSms();
   const events: any[] = [];
   const risk = { recordEvent: async (input: any) => { events.push(input); } };
-  const service = new OtpService(repo, sms, "pepper", "OPPA", undefined, risk as any);
+  const service = new OtpService(repo, sms, "pepper", risk as any);
   const first = await service.request("+2348012345678", new Date("2026-01-01T00:00:00Z"));
   // A consumed challenge (verified or SMS-failure path) leaves the cooldown
   // branch reachable; an unconsumed one short-circuits to OTP_ALREADY_ACTIVE.
@@ -60,4 +61,47 @@ test("records an OTP abuse event when rate limited", async () => {
   assert.equal(events[0].category, "otp_abuse");
   assert.equal(events[0].signal, "request_cooldown");
   assert.deepEqual(events[0].metadata, { phone: "+2348012345678" });
+});
+
+test("challenge survives gateway ambiguity (unknown never burns the OTP)", async () => {
+  const repo = new MemoryOtpRepository();
+  const sms = new CapturingSms();
+  sms.result = { provider: "test-provider", outcome: "unknown", error: { kind: "timeout" } };
+  const service = new OtpService(repo, sms, "pepper");
+  const now = new Date("2026-01-01T00:00:00Z");
+  const result = await service.request("+2348012345678", now);
+  assert.equal(result.delivery, "unknown");
+  // The challenge must remain verifiable: an SMS may still be in flight.
+  const active = await repo.getActive("+2348012345678", now);
+  assert.ok(active, "ambiguous delivery must NOT consume the challenge");
+  assert.equal(active!.id, result.challengeId);
+});
+
+test("definitive provider failure consumes the challenge and fails loudly", async () => {
+  const repo = new MemoryOtpRepository();
+  const sms = new CapturingSms();
+  sms.result = { provider: "test-provider", outcome: "failed", error: { kind: "provider_rejected", httpStatus: 400 } };
+  const service = new OtpService(repo, sms, "pepper");
+  const now = new Date("2026-01-01T00:00:00Z");
+  await assert.rejects(service.request("+2348012345678", now), { message: "SMS_DELIVERY_FAILED" });
+  const active = await repo.getActive("+2348012345678", now);
+  assert.equal(active, null, "no SMS went out, so no active challenge may linger");
+});
+
+test("accepted delivery stores the provider message id on the challenge", async () => {
+  const repo = new MemoryOtpRepository();
+  const sms = new CapturingSms();
+  const service = new OtpService(repo, sms, "pepper");
+  const result = await service.request("+2348012345678", new Date("2026-01-01T00:00:00Z"));
+  assert.equal(result.delivery, "submitted");
+  const active = await repo.getActive("+2348012345678", new Date("2026-01-01T00:00:01Z"));
+  assert.equal(active!.providerMessageId, "msg-1");
+});
+
+test("unconfigured gateway maps to SMS_GATEWAY_UNCONFIGURED, not a generic error", async () => {
+  const repo = new MemoryOtpRepository();
+  const sms = new CapturingSms();
+  sms.result = { provider: "failover-gateway", outcome: "failed", error: { kind: "provider_rejected", providerCode: "SMS_GATEWAY_UNCONFIGURED" } };
+  const service = new OtpService(repo, sms, "pepper");
+  await assert.rejects(service.request("+2348012345678", new Date("2026-01-01T00:00:00Z")), { message: "SMS_GATEWAY_UNCONFIGURED" });
 });

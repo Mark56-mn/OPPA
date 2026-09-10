@@ -21,12 +21,12 @@ function otpRepo(): OtpRepository & { attempts: number; consumeCalls: number } {
 
 const sms: SmsProvider = {
   name: "test",
-  async send() { return { provider: "test", status: "queued" as const }; }
+  async send() { return { provider: "test", outcome: "accepted" as const, providerMessageId: "msg-1" }; }
 };
 
 test("OTP verify rejects malformed code shapes before any repository access", async () => {
   const repo = otpRepo();
-  const service = new OtpService(repo, sms, "pepper-aaa", "OPPA", undefined, undefined);
+  const service = new OtpService(repo, sms, "pepper-aaa", undefined);
   // Non-6-digit shapes must fail fast without touching the challenge store.
   for (const bad of ["", "12345", "1234567", "abcdef", "12 456", "+123456"]) {
     await assert.rejects(() => service.verify("+2348012345678", bad), /OTP_INVALID_OR_EXPIRED/);
