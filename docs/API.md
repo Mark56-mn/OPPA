@@ -8,9 +8,13 @@ Request:
 { "phone": "+2348012345678" }
 
 Response:
-- 202 with a challenge identifier
+- 202 with `{ "challengeId": "...", "delivery": "submitted" | "unknown" }`
 - 400 for invalid phone input
 - 429 when an OTP is active or rate limits are exceeded
+- 502 `SMS_DELIVERY_FAILED` when every configured SMS provider definitively rejected the send (no challenge lingers)
+- 503 `SMS_GATEWAY_UNCONFIGURED` when no SMS provider credential is configured (fails closed; no fake delivery)
+
+`delivery: "unknown"` means the send outcome is ambiguous (provider timeout/network error). An SMS may still be in flight, so the challenge stays verifiable and the client should proceed to the code-entry screen; the API never auto-resends on ambiguity (duplicate-delivery prevention). OTP requests are served through a configurable primary/fallback provider chain (BulkSMS Nigeria, Termii) behind one normalized `sendOtp(phone, code)` operation — provider failover never generates a second OTP.
 
 ### POST /auth/otp/verify
 
@@ -91,6 +95,26 @@ Response:
 - 409 when the payment is not settled or already reversed
 
 Provider-initiated refund webhooks remain explicitly unimplemented (`501`) until provider refund APIs are integrated.
+
+## Payment webhooks (unauthenticated surface)
+
+Only two unauthenticated payment routes exist. Both verify authenticity before any state mutation, over the RAW request body:
+
+- `POST /payments/webhooks/paystack` — HMAC-SHA512 hex of the raw body keyed with `PAYSTACK_SECRET_KEY` in `x-paystack-signature`.
+- `POST /payments/webhooks/flutterwave` — Flutterwave V3 secret echoed verbatim in the `verif-hash` header, compared in constant time.
+
+Settlement flow: verify signature → parse + extract reference → event gate (non-charge events are acknowledged without mutation) → **server-side verification against the provider API** (webhook data alone never settles) → resolve the OPPA transaction from our own database (ownership from the row, not the payload) → amount/currency/reference validation → idempotent settlement (row lock, single wallet credit, double-entry reference, audit event, outbox notification). Duplicates, replays, amount/currency mismatch, forged signatures and provider outages all fail closed and never double-credit a wallet.
+
+## SMS delivery callbacks (unauthenticated surface)
+
+- `POST /sms/webhooks/bulksms` — BulkSMS delivery reports (no provider signing exists): payload-validated, bounded to the delivery-attempt ledger; can never touch OTP challenges, wallets, or payments.
+- `POST /sms/webhooks/termii` — Termii events, HMAC-verified with `TERMII_WEBHOOK_SECRET` in `x-termii-signature`; the flow is opt-in and disabled (401) when no secret is configured.
+
+All attempts (accepted/failed/unknown) and terminal delivery states persist to the `oppa_sms_delivery_attempts` ledger (migration 0022) — auditable failover, durable per-challenge rate budget, and reconciliation support without storing any OTP material.
+
+## Provider configuration introspection
+
+`GET /config/providers` reports which provider variables are present — **names only, never values** — plus the SMS provider order and gateway mode (`live` | `unconfigured`).
 
 ## Wallet transfer limits
 
