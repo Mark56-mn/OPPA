@@ -1,11 +1,12 @@
 import "../core/api_client.dart";
+import "../core/api_client_base.dart";
 import "../core/outbound_queue.dart";
 
 /// Profile (display name, about, avatar, OPPA ID). Server validates lengths
 /// and owns all OPPA ID rules (shape, reserved names, uniqueness).
 class ProfileRepository {
   ProfileRepository(this._api);
-  final ApiClient _api;
+  final ApiClientBase _api;
 
   Future<ApiResponse> mine() => _api.get("/profile");
   Future<ApiResponse> update({String? displayName, String? about, String? avatarUrl}) =>
@@ -32,7 +33,7 @@ class ProfileRepository {
 /// Contacts with block/report (support surface).
 class ContactsRepository {
   ContactsRepository(this._api);
-  final ApiClient _api;
+  final ApiClientBase _api;
 
   Future<ApiResponse> list() => _api.get("/contacts");
   Future<ApiResponse> add(String userId, {String? nickname}) =>
@@ -46,7 +47,7 @@ class ContactsRepository {
 /// Conversations: direct and groups.
 class ConversationsRepository {
   ConversationsRepository(this._api);
-  final ApiClient _api;
+  final ApiClientBase _api;
 
   Future<ApiResponse> list() => _api.get("/conversations");
   Future<ApiResponse> createDirect(String userId) =>
@@ -65,7 +66,7 @@ class ConversationsRepository {
 /// receipts are read-through with pagination.
 class MessagesRepository {
   MessagesRepository(this._api, this._queue);
-  final ApiClient _api;
+  final ApiClientBase _api;
   final OutboundQueue _queue;
 
   Future<ApiResponse> history(String conversationId, {String? before, int limit = 50}) {
@@ -120,7 +121,7 @@ class MessagesRepository {
 /// so a captured proof cannot authorize different values.
 class WalletRepository {
   WalletRepository(this._api);
-  final ApiClient _api;
+  final ApiClientBase _api;
 
   Future<ApiResponse> overview() => _api.get("/wallet");
   Future<ApiResponse> history({String? before, int limit = 25}) {
@@ -180,7 +181,7 @@ class WalletRepository {
 /// the server enforces the self-ordering blocker regardless of client.
 class BusinessRepository {
   BusinessRepository(this._api);
-  final ApiClient _api;
+  final ApiClientBase _api;
 
   Future<ApiResponse> listMine() => _api.get("/business");
   Future<ApiResponse> create({required String name, String? description}) =>
@@ -237,7 +238,7 @@ class BusinessRepository {
 /// OPPA-native calls: start/answer/decline/hangup + event polling.
 class CallsRepository {
   CallsRepository(this._api);
-  final ApiClient _api;
+  final ApiClientBase _api;
 
   Future<ApiResponse> start(String conversationId, {required bool video}) =>
       _api.post("/conversations/$conversationId/calls", body: {"kind": video ? "video" : "audio"});
@@ -263,7 +264,7 @@ class CallsRepository {
 /// (with optional notificationId), GET/PUT /notifications/preferences.
 class NotificationsRepository {
   NotificationsRepository(this._api);
-  final ApiClient _api;
+  final ApiClientBase _api;
 
   Future<ApiResponse> list({String? before, int limit = 50}) {
     final query = <String, String>{"limit": "$limit"};

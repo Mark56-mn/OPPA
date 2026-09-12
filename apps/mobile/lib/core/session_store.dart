@@ -1,6 +1,7 @@
 import "dart:async";
 
 import "api_client.dart";
+import "api_client_base.dart";
 import "outbound_queue.dart";
 
 enum AuthPhase { unknown, signedOut, authenticated }
@@ -10,7 +11,7 @@ enum AuthPhase { unknown, signedOut, authenticated }
 class SessionStore {
   SessionStore({required this.api, required this.tokens});
 
-  final ApiClient api;
+  final ApiClientBase api;
   final SecureTokenStore tokens;
 
   final _phaseController = StreamController<AuthPhase>.broadcast();

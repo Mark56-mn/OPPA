@@ -6,6 +6,7 @@ import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
 import "api_client.dart";
+import "api_client_base.dart";
 
 /// A queued, not-yet-confirmed mutation.
 class PendingOp {
@@ -81,7 +82,7 @@ class OutboundQueue {
     _load();
   }
 
-  final ApiClient api;
+  final ApiClientBase api;
   SharedPreferences? _prefs;
   static const _storageKey = "oppa.outbound_queue.v1";
   static const _maxQueue = 200;

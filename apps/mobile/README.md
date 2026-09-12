@@ -19,7 +19,10 @@ lib/
   main.dart                    entrypoint (OPPA_API_URL dart-define)
   app.dart                     composition root (api/session/queue/repos/themes)
   core/
+    api_client_base.dart       transport contract shared by real + demo layers
     api_client.dart            timeouts, retry classification, backoff+jitter
+    demo_mode.dart             compile-time OPPA_DEMO_MODE constants (default OFF)
+    demo_backend.dart          in-process demo backend (no network, demo OTP)
     connectivity_service.dart  online/reconnecting/offline state machine
     outbound_queue.dart        durable offline queue + secure token store
     screen_data.dart           cache-first loader with honest states
@@ -28,13 +31,29 @@ lib/
   data/repositories.dart       typed repos matching the API exactly
   design/oppa_themes.dart      Fluid Africa / OPPA Pulse / Everyday OPPA
   ui/
-    screens/auth_gate.dart     phone → OTP → session
+    screens/auth_gate.dart     phone → OTP (demo hint) → voice-name → session
     screens/home_screens.dart  home, notifications, support/trust
     screens/chat_screens.dart  chats, thread (offline-pending sends), contacts
     screens/wallet_screens.dart balance, history, step-up transfer, funding
     screens/me_screens.dart    profile, themes, security posture, sign-out
     widgets/common.dart        StatusBanner + loading/empty/error views
 ```
+
+## Demo mode (first APK without OTP providers)
+
+A compile-time demo data layer exists for physical UI/UX testing. It performs
+**no network I/O** and never sends the demo OTP (`000000`) anywhere; production
+authentication is untouched. Demo mode is off by default and a product build
+compiled with it refuses to start.
+
+```bash
+flutter build apk --debug --dart-define=OPPA_DEMO_MODE=true
+```
+
+Details and guardrails: `docs/MOBILE_DEMO_BUILD.md`. Codemagic workflows
+(`oppa-mobile-demo`, `oppa-mobile-release`) live in the root `codemagic.yaml`;
+Android platform scaffolding is generated on demand with
+`sh ./scripts/prepare_android.sh`.
 
 ## Security model
 
@@ -64,8 +83,9 @@ secrets — see the root `CODEX_HANDOFF.md`).
 | Gate | Status |
 |---|---|
 | `flutter analyze` | NOT RUN — Flutter SDK unavailable in implementation environment |
-| `flutter test` | NOT RUN — same |
-| Android release build | NOT RUN — same |
+| `flutter test` | NOT RUN — same (new demo tests included: `test/demo_backend_test.dart`, `test/demo_mode_test.dart`) |
+| Android release build | NOT RUN — same; scaffold with `sh ./scripts/prepare_android.sh` first |
+| Demo-mode safety | Verified by inspection + tripwire tests; demo OTP never leaves the app process |
 | Endpoint contract | Verified against `apps/api/src/modules/**/*-routes.ts` at implementation time |
 
 Run `flutter analyze && flutter test` before merging UI changes on a machine

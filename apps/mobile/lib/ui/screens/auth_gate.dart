@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 
+import "../../core/demo_mode.dart";
 import "../../core/device_key_manager.dart";
 import "../../core/session_store.dart";
 import "../../core/voice_service.dart";
@@ -219,6 +220,26 @@ class _AuthGateState extends State<AuthGate> {
   Widget _otpStep(ThemeData theme) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (DemoMode.enabled) ...[
+            // Development-only hint: this code exists only inside the demo
+            // backend in this app process. It is never accepted by production
+            // authentication (it is simply a wrong code there).
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.amber.shade700.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.amber.shade700),
+              ),
+              child: Text(
+                "${DemoMode.bannerLabel}: development OTP is ${DemoMode.demoOtp}. "
+                "No network request is made.",
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: Colors.amber.shade100),
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
           TextField(
             controller: _codeController,
             keyboardType: TextInputType.number,

@@ -4,6 +4,8 @@ import "dart:math";
 
 import "package:http/http.dart" as http;
 
+import "api_client_base.dart";
+
 /// Result of a single API attempt, classified for retry logic.
 enum AttemptKind { success, clientError, serverError, networkError, timeout }
 
@@ -75,7 +77,7 @@ class ApiResponse {
 ///   state with a safe read first;
 /// - exponential backoff with jitter: 1s, 2s, 4s (+/- 30%) capped at 15s;
 /// - compact JSON bodies; no polling loops inside the client itself.
-class ApiClient {
+class ApiClient implements ApiClientBase {
   ApiClient({
     required this.baseUrl,
     http.Client? client,

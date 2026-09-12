@@ -1,0 +1,79 @@
+# Codemagic configuration for OPPA mobile (apps/mobile).
+#
+# Workflows:
+#   oppa-mobile-demo    — DEBUG APK with compile-time demo mode enabled for
+#                         physical UI/UX testing without production OTP
+#                         credentials. Never ships: demo mode is refused at
+#                         startup in product builds (apps/mobile/lib/app.dart).
+#   oppa-mobile-release — RELEASE APK with NO demo defines. Runs the Flutter
+#                         test suite first, including the compile-time tripwire
+#                         tests that assert demo mode defaults to OFF.
+#
+# Safety notes:
+# - The release workflow must never gain OPPA_DEMO_MODE=true.
+# - No secrets are required for the demo workflow.
+# - Release signing: add the `:android-signing` group in Codemagic (keystore +
+#   aliases) when store distribution begins; app-store connect credentials are
+#   intentionally absent.
+
+workflows:
+  oppa-mobile-demo:
+    name: OPPA Mobile — Demo (debug APK)
+    max_build_duration: 30
+    environment:
+      # Flutter version pinned for reproducible first-APK builds.
+      flutter: stable
+      groups:
+        - oppa_common
+      vars:
+        # Ignored by demo builds (no network); kept for log clarity.
+        OPPA_API_URL: "https://unset.invalid"
+    scripts:
+      - name: Flutter doctor
+        script: flutter doctor -v
+      - name: Get packages
+        script: cd apps/mobile && flutter pub get
+      - name: Analyze
+        script: cd apps/mobile && flutter analyze --no-fatal-infos
+      - name: Unit tests
+        script: cd apps/mobile && flutter test
+      - name: Build demo debug APK
+        script: |
+          cd apps/mobile
+          flutter build apk --debug \
+            --dart-define=OPPA_DEMO_MODE=true
+    artifacts:
+      - apps/mobile/build/app/outputs/flutter-apk/*.apk
+    publishing:
+      email:
+        recipients:
+          - build-reports@oppa.example
+
+  oppa-mobile-release:
+    name: OPPA Mobile — Release (no demo mode)
+    max_build_duration: 45
+    environment:
+      flutter: stable
+      groups:
+        - oppa_common
+        # Uncomment once signing credentials are provisioned in Codemagic:
+        # - :android-signing
+    scripts:
+      - name: Flutter doctor
+        script: flutter doctor -v
+      - name: Get packages
+        script: cd apps/mobile && flutter pub get
+      - name: Analyze
+        script: cd apps/mobile && flutter analyze --no-fatal-infos
+      - name: Unit tests (asserts demo mode is compile-time OFF)
+        script: cd apps/mobile && flutter test
+      - name: Build release APK (no demo defines)
+        script: |
+          cd apps/mobile
+          flutter build apk --release
+    artifacts:
+      - apps/mobile/build/app/outputs/flutter-apk/*.apk
+    publishing:
+      email:
+        recipients:
+          - build-reports@oppa.example
