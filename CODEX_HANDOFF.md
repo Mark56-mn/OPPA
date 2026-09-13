@@ -18,7 +18,7 @@ Durable resume state for autonomous Codex sessions. The next agent must read thi
 
 **Codemagic (`codemagic.yaml`, new)**: workflow `oppa-mobile-demo` (debug APK with `--dart-define=OPPA_DEMO_MODE=true`, analyze+test+build, artifact published, no signing needed) and `oppa-mobile-release` (release APK with **no demo defines**, test suite first so the demo-OFF tripwires run). Release signing group intentionally commented until the owner provisions a keystore.
 
-**Android scaffolding**: `scripts/prepare_android.sh` (new) runs `flutter create --platforms=android` once in an SDK-capable environment (repo deliberately does not commit `apps/mobile/android`). **Flutter analyze/test VERIFIED with the SDK at `/tmp/flutter`. Android build/device testing remains BLOCKED here** — no `android/` platform dir in the repo yet, no Android SDK, no Java.
+**Android platform (COMMITTED — fixes the first Codemagic failure)**: the first Codemagic run of `oppa-mobile-demo` failed with `PathNotFoundException: android/app/build.gradle` because the branch never committed `apps/mobile/android` and no workflow scaffolded it. Fixed in commit `9e1bed7`: the flutter-generated Android platform is now **committed** (Gradle wrapper + `gradlew` committed explicitly at mode 100755 so fresh CI clones build with the pinned Gradle 8.12; `local.properties`/`.iml` correctly excluded). `AndroidManifest.xml` gained the permissions the app actually uses — `INTERNET`, `RECORD_AUDIO` (speech_to_text voice onboarding) — plus the Android 11+ `<queries>` entry for `android.speech.RecognitionService` so package visibility cannot silently break voice input; `minSdk` pinned to 23 (`flutter_secure_storage` requires API 23+; avoids CI breakage if a future Flutter lowers the default); app label set to "OPPA". Both Codemagic workflows now include a fail-fast "Verify Android platform is committed" step before pub get. A template `test/widget_test.dart` that `flutter create` added was removed (it tests the default counter app and would fail CI). **Flutter analyze/test VERIFIED with the SDK at `/tmp/flutter` (no issues; 38/38 pass). Android build/device testing remains BLOCKED locally** — no Android SDK, no Java in this sandbox; the committed platform is built by Codemagic instead.
 
 **Docs**: `docs/MOBILE_DEMO_BUILD.md` (new: safety invariants, build/install commands, demo coverage table, honest limits); `apps/mobile/README.md` updated (architecture entries for the new core files, demo-mode section, verification table updated with demo status).
 
@@ -26,7 +26,7 @@ Durable resume state for autonomous Codex sessions. The next agent must read thi
 
 **NOT RUN / BLOCKED (environment)**: Codemagic build (needs the repo connected to a Codemagic project + owner account), Android APK build (no Android SDK/Java here) and device UI/UX testing (needs the built APK + a device). None of these were faked.
 
-**NEXT EXACT TASK**: (1) push/verify `oppa-mobile-demo` branch on GitHub; (2) connect the repo to Codemagic and run `oppa-mobile-demo` to produce the first APK; (3) install on a device and run the UI/UX acceptance pass; (4) merge `oppa-mobile-demo` → `main` manually after owner review (owner merge policy).
+**NEXT EXACT TASK**: (1) re-run the Codemagic `oppa-mobile-demo` workflow on commit `9e1bed7` or later — the missing-`android/` failure is fixed and the debug APK should now build; (2) install on a device and run the UI/UX acceptance pass; (3) merge `oppa-mobile-demo` → `main` manually after owner review (owner merge policy).
 
 ---
 
