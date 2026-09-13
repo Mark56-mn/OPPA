@@ -1,17 +1,45 @@
 import "dart:async";
 
+import "package:flutter/foundation.dart";
+
 import "api_client_base.dart";
 import "outbound_queue.dart";
 
-enum AuthPhase { unknown, signedOut, authenticated }
+enum AuthPhase {
+  /// Initial value before bootstrap() settles. Renders a spinner for at most
+  /// the (short) bootstrap duration — see the fail-closed contract below.
+  unknown,
+  signedOut,
+  authenticated,
 
-/// Real session lifecycle against the OPPA API:
+  /// Bootstrap could not decide (secure-storage error or read timeout).
+  /// The app shows a visible error + Retry; it must never be silent.
+  bootstrapFailed,
+}
+
+/// Real session lifecycle against the OPPA API (or the in-process demo
+/// backend):
 /// phone → OTP → (access, refresh, deviceId) → refresh rotation → logout.
 class SessionStore {
-  SessionStore({required this.api, required this.tokens});
+  SessionStore({
+    required this.api,
+    required this.tokens,
+    this.bootstrapTimeout = const Duration(seconds: 10),
+  });
 
   final ApiClientBase api;
   final SecureTokenStore tokens;
+
+  /// Upper bound for the secure-token probe during bootstrap. Generous for
+  /// low-end devices / keystore cold starts; only an unexpected hang trips it.
+  final Duration bootstrapTimeout;
+
+  /// Human-readable startup failure when [AuthPhase.bootstrapFailed]. Never
+  /// contains secrets — it is rendered directly in the retry UI.
+  String? bootstrapError;
+
+  Completer<void>? _bootstrapInFlight;
+  bool _disposed = false;
 
   final _phaseController = StreamController<AuthPhase>.broadcast();
   AuthPhase _phase = AuthPhase.unknown;
@@ -25,9 +53,54 @@ class SessionStore {
   bool get awaitingProfileName => _awaitingProfile;
   bool _awaitingProfile = false;
 
-  Future<void> bootstrap() async {
-    final refresh = await tokens.refreshToken();
-    _setPhase(refresh == null ? AuthPhase.signedOut : AuthPhase.authenticated);
+  /// Startup diagnostics — phase transitions and coarse storage outcomes
+  /// only. Printed via debugPrint so `adb logcat -s flutter` captures them on
+  /// a device. NEVER logs tokens, phone numbers, or any other secret.
+  void _log(String message) => debugPrint("OPPA.session: $message");
+
+  /// Fail-closed startup: resolves AuthPhase.unknown exactly once.
+  ///
+  /// unknown → bootstrap → signedOut (no stored session)
+  ///                     → authenticated (stored session)
+  ///                     → bootstrapFailed (visible error; retry re-runs this)
+  ///
+  /// Guarantees (added after the first APK hung on the auth spinner forever):
+  /// - can never hang: the secure-token read is bounded by [bootstrapTimeout];
+  /// - can never silently authenticate: an unexpected failure goes to a
+  ///   VISIBLE bootstrapFailed state with a Retry action, never signedIn;
+  /// - concurrent callers share one bootstrap; a completed/failed bootstrap
+  ///   can be re-run by calling bootstrap() again (used by the Retry button).
+  Future<void> bootstrap() {
+    final inFlight = _bootstrapInFlight;
+    if (inFlight != null) return inFlight.future;
+    final completer = Completer<void>();
+    _bootstrapInFlight = completer;
+    return _doBootstrap().whenComplete(() {
+      _bootstrapInFlight = null;
+      completer.complete();
+    });
+  }
+
+  Future<void> _doBootstrap() async {
+    _log("bootstrap: start");
+    try {
+      final refresh = await tokens
+          .refreshToken()
+          .timeout(bootstrapTimeout,
+              onTimeout: () => throw TimeoutException(
+                  "SecureTokenStore.refreshToken did not settle"));
+      _log("bootstrap: refresh token read done (present=${refresh != null})");
+      _setPhase(refresh == null ? AuthPhase.signedOut : AuthPhase.authenticated);
+    } catch (error) {
+      // Fail closed: visible error + retry — never a permanent spinner and
+      // never a silent authentication. Common causes: platform keystore
+      // failure, missing secure-storage platform channel, or a hang above.
+      bootstrapError = error is TimeoutException
+          ? "Secure storage did not respond during startup."
+          : "Secure storage is unavailable on this device.";
+      _log("bootstrap: failed — switching to visible retry UI ($error)");
+      _setPhase(AuthPhase.bootstrapFailed);
+    }
   }
 
   /// Onboarding final step: save the display name (voice-dictated or typed)
@@ -45,6 +118,9 @@ class SessionStore {
         _awaitingProfile = true;
       }
     }
+    // Onboarding finished (saved, skipped, or save failed non-fatally): the
+    // personal shell may now take over.
+    _awaitingProfile = false;
     _setPhase(AuthPhase.authenticated);
   }
 
@@ -67,6 +143,10 @@ class SessionStore {
         // stable local identity we enrolled with.
         await tokens.save(accessToken: access, refreshToken: refresh, deviceId: deviceId);
         await tokens.devicePublicKey(devicePublicKeyPem);
+        // The session is live, but onboarding (the voice/typed name step in
+        // AuthGate) is still pending — the shell must not swap in until it
+        // completes or is explicitly skipped.
+        _awaitingProfile = true;
         _setPhase(AuthPhase.authenticated);
       }
     }
@@ -111,6 +191,7 @@ class SessionStore {
 
   Future<void> signOut() async {
     await tokens.clear();
+    _awaitingProfile = false;
     _setPhase(AuthPhase.signedOut);
   }
 
@@ -123,8 +204,12 @@ class SessionStore {
 
   void _setPhase(AuthPhase p) {
     _phase = p;
-    _phaseController.add(p);
+    _log("phase → $p");
+    if (!_disposed) _phaseController.add(p);
   }
 
-  void dispose() => _phaseController.close();
+  void dispose() {
+    _disposed = true;
+    _phaseController.close();
+  }
 }

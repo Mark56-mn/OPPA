@@ -84,7 +84,9 @@ secrets — see the root `CODEX_HANDOFF.md`).
 | Gate | Status |
 |---|---|
 | `flutter analyze` | PASS — No issues found (SDK at `/tmp/flutter`) |
-| `flutter test` | PASS — 38/38 (includes `test/demo_backend_test.dart`, `test/demo_mode_test.dart`) |
+| `flutter test` | PASS — 52/52 (incl. `session_bootstrap_test`, `startup_ui_test` widget tests, `demo_backend_test`, `demo_mode_test`) |
+| Define-positive demo check | PASS — `flutter test --dart-define=OPPA_DEMO_MODE=true test/demo_mode_test.dart` (CI runs it before the APK build) |
+| Startup regression | PASS — widget tests prove fresh start reaches `AuthGate`, never a permanent spinner; storage failure/timeout → visible Retry UI (fail closed) |
 | Android debug APK | Via Codemagic `oppa-mobile-demo` (committed `android/` platform); local device build BLOCKED — no Android SDK here |
 | Demo-mode safety | Verified by inspection + tripwire tests; demo OTP never leaves the app process |
 | Endpoint contract | Verified against `apps/api/src/modules/**/*-routes.ts` at implementation time |

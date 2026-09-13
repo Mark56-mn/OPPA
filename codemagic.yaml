@@ -54,6 +54,8 @@ workflows:
         script: cd apps/mobile && flutter analyze --no-fatal-infos
       - name: Unit tests
         script: cd apps/mobile && flutter test
+      - name: Verify demo define reaches compiled code
+        script: cd apps/mobile && flutter test --dart-define=OPPA_DEMO_MODE=true test/demo_mode_test.dart
       - name: Build demo debug APK
         script: |
           cd apps/mobile
