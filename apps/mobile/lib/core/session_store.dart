@@ -1,6 +1,5 @@
 import "dart:async";
 
-import "api_client.dart";
 import "api_client_base.dart";
 import "outbound_queue.dart";
 

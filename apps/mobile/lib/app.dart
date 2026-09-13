@@ -128,20 +128,20 @@ class _OppaAppState extends State<OppaApp> {
           child: Stack(
             children: [
               child ?? const SizedBox.shrink(),
-              Positioned(
+              const Positioned(
                 top: 0,
                 left: 0,
                 right: 0,
                 child: Material(
-                  color: Colors.amber.shade700,
+                  color: Colors.amber,
                   child: SafeArea(
                     bottom: false,
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      padding: EdgeInsets.symmetric(vertical: 2),
                       child: Text(
                         DemoMode.bannerLabel,
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w700,
                           letterSpacing: 1.2,

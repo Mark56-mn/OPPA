@@ -1,5 +1,3 @@
-import "dart:async";
-
 import "package:flutter_test/flutter_test.dart";
 
 import "package:oppa_mobile/core/api_client.dart";
@@ -152,9 +150,10 @@ void main() {
       final calls = (history.body as Map)["calls"] as List;
       expect(calls, isNotEmpty);
 
-      final ringing = calls.firstWhere((c) => c["status"] == "ringing",
-          orElse: () => null);
-      expect(ringing, isNotNull);
+      final ringingCalls =
+          calls.where((c) => c["status"] == "ringing").toList();
+      expect(ringingCalls, isNotEmpty);
+      final ringing = ringingCalls.first;
       final answer = await api.post(
           "/conversations/conv-demo-user-amara/calls/${ringing["id"]}/answer");
       expect(answer.isSuccess, isTrue);

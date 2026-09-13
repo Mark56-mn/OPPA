@@ -1,4 +1,7 @@
 import "api_client_base.dart";
+
+export "api_client_base.dart" show AttemptKind, ApiResponse;
+
 import "demo_mode.dart";
 
 /// In-process deterministic backend for OPPA DEMO builds.

@@ -5,7 +5,6 @@ import "dart:math";
 import "package:flutter_secure_storage/flutter_secure_storage.dart";
 import "package:shared_preferences/shared_preferences.dart";
 
-import "api_client.dart";
 import "api_client_base.dart";
 
 /// A queued, not-yet-confirmed mutation.
@@ -208,16 +207,13 @@ class OutboundQueue {
 
   Future<FlushResult> _attemptOne(PendingOp op) async {
     final response = await api.post(op.path, body: op.body);
-    switch (response.kind) {
-      case AttemptKind.success:
-        return FlushResult.confirmed;
-      case AttemptKind.clientError:
-        return FlushResult.failedPermanent;
-      case AttemptKind.networkError:
-      case AttemptKind.timeout:
-      case AttemptKind.serverError:
-        return FlushResult.retryLater;
-    }
+    return switch (response.kind) {
+      AttemptKind.success => FlushResult.confirmed,
+      AttemptKind.clientError => FlushResult.failedPermanent,
+      AttemptKind.networkError ||
+      AttemptKind.timeout ||
+      AttemptKind.serverError => FlushResult.retryLater,
+    };
   }
 
   /// Schedules a flush: immediately on reconnect, otherwise with backoff.

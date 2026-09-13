@@ -4,7 +4,7 @@
 Durable resume state for autonomous Codex sessions. The next agent must read this file together with `OPPA_MASTER_BUILD_SPEC.md`, `CODEX_AUTOPILOT.md`, `CODEX_BUILD_MAP.md` and the active task file.
 
 ## LAST UPDATED
-2026-09-12 (session 9, **DEMO MOBILE BUILD + CODEMAGIC FIRST APK TASK**, branch `oppa-mobile-demo` off `2b8b7d2`) — **Safe demo mode implemented and wired end-to-end; production auth untouched.**
+2026-09-12 (session 9, **DEMO MOBILE BUILD + CODEMAGIC FIRST APK TASK**, branch `oppa-mobile-demo` off `2b8b7d2`) — **Safe demo mode implemented and wired end-to-end; production auth untouched. SDK VERIFICATION EXECUTED: `flutter analyze` = No issues found, `flutter test` = 38/38 PASS (Flutter SDK found at `/tmp/flutter` in a later pass; compile errors found by the analyzer were fixed — see below).**
 
 **Architecture (DI, one injection point)**: new `apps/mobile/lib/core/api_client_base.dart` defines the `ApiClientBase` transport contract (get/post/patch/put/delete returning `ApiResponse`). The real `ApiClient` implements it unchanged; **all** dependents (`SessionStore`, `OutboundQueue`, all 8 repositories) now depend on the interface, not the concrete class. `app.dart` picks `DemoBackend` when `DemoMode.enabled`, else the real HTTP client — no other screen/service changed.
 
@@ -14,19 +14,19 @@ Durable resume state for autonomous Codex sessions. The next agent must read thi
 
 **Auth UX**: OTP step shows the demo code hint only when `DemoMode.enabled`; production verification path unchanged (the demo code is simply a wrong code against the real API — covered by tests).
 
-**Tests**: `test/demo_backend_test.dart` (13 tests: demo-OFF tripwire; request→verify with `DemoMode.demoOtp` succeeds in-process; wrong code → 401; structural tripwire that `DemoBackend` implements `ApiClientBase` but is **not** an `ApiClient`; endpoint-shape parity for profile/conversations/messages/calls/wallet/business/notifications incl. self-order blocker `BUSINESS_ORDER_SELF_INVALID` and invalid call transitions) and `test/demo_mode_test.dart` (3 tests: compile-time OFF default, product-build flag semantics, OTP/banner constants). **NOT RUN — Flutter SDK is absent in this environment** (same blocker as sessions 3–8); the demo-OFF tripwires will execute first in the Codemagic release workflow.
+**Tests**: `test/demo_backend_test.dart` (16 tests: demo-OFF tripwire; request→verify with `DemoMode.demoOtp` succeeds in-process; wrong code → 401; structural tripwire that `DemoBackend` implements `ApiClientBase` but is **not** an `ApiClient`; endpoint-shape parity for profile/conversations/messages/calls/wallet/business/notifications incl. self-order blocker `BUSINESS_ORDER_SELF_INVALID` and invalid call transitions) and `test/demo_mode_test.dart` (3 tests: compile-time OFF default, product-build flag semantics, OTP/banner constants). **RUN AND PASSING**: the Flutter SDK was located at `/tmp/flutter` and the suite executed for real — `flutter analyze` = **No issues found!**, `flutter test` = **38/38 pass** (19 pre-existing + 19 new demo tests). The analyzer caught and this session fixed three real compile errors in the drafted code: `ApiResponse`/`AttemptKind` were used by `api_client_base.dart` and `demo_backend.dart` without an import (would-be circular import) — resolved by moving both types into `api_client_base.dart` and re-exporting from `api_client.dart` (all existing imports still compile); a non-exhaustive `switch` statement over `AttemptKind` in `outbound_queue.dart` (replaced with an exhaustive switch expression); and the const lints on the demo banner. Also fixed: `orElse: () => null` type error in the seeded-call test.
 
 **Codemagic (`codemagic.yaml`, new)**: workflow `oppa-mobile-demo` (debug APK with `--dart-define=OPPA_DEMO_MODE=true`, analyze+test+build, artifact published, no signing needed) and `oppa-mobile-release` (release APK with **no demo defines**, test suite first so the demo-OFF tripwires run). Release signing group intentionally commented until the owner provisions a keystore.
 
-**Android scaffolding**: `scripts/prepare_android.sh` (new) runs `flutter create --platforms=android` once in an SDK-capable environment (repo deliberately does not commit `apps/mobile/android`). **Android build/device testing remains BLOCKED here** — no Flutter SDK, no Android SDK, no Java.
+**Android scaffolding**: `scripts/prepare_android.sh` (new) runs `flutter create --platforms=android` once in an SDK-capable environment (repo deliberately does not commit `apps/mobile/android`). **Flutter analyze/test VERIFIED with the SDK at `/tmp/flutter`. Android build/device testing remains BLOCKED here** — no `android/` platform dir in the repo yet, no Android SDK, no Java.
 
 **Docs**: `docs/MOBILE_DEMO_BUILD.md` (new: safety invariants, build/install commands, demo coverage table, honest limits); `apps/mobile/README.md` updated (architecture entries for the new core files, demo-mode section, verification table updated with demo status).
 
 **Production-safety review of this diff**: no production route changed; no OTP bypass anywhere in `apps/api`; demo OTP exists only inside `DemoBackend` in-process; no secrets added; `DemoMode.enabled` default false asserted by tests in every build.
 
-**NOT RUN / BLOCKED (environment)**: flutter analyze/test (no Flutter SDK in sandbox), Codemagic build (needs connected Codemagic project + owner account), Android device UI/UX testing (needs built APK + device). None of these were faked.
+**NOT RUN / BLOCKED (environment)**: Codemagic build (needs the repo connected to a Codemagic project + owner account), Android APK build (no Android SDK/Java here) and device UI/UX testing (needs the built APK + a device). None of these were faked.
 
-**NEXT EXACT TASK**: (1) push/verify `oppa-mobile-demo` branch on GitHub; (2) connect the repo to Codemagic and run `oppa-mobile-demo` to produce the first APK; (3) install on a device and run the UI/UX acceptance pass; (4) run `flutter analyze && flutter test` anywhere the SDK exists and record results here; (5) merge `oppa-mobile-demo` → `main` manually after owner review (owner merge policy).
+**NEXT EXACT TASK**: (1) push/verify `oppa-mobile-demo` branch on GitHub; (2) connect the repo to Codemagic and run `oppa-mobile-demo` to produce the first APK; (3) install on a device and run the UI/UX acceptance pass; (4) merge `oppa-mobile-demo` → `main` manually after owner review (owner merge policy).
 
 ---
 
