@@ -35,6 +35,11 @@ touching production authentication.
 
 ## Building the demo APK
 
+The `android/` platform folder is committed (with the manifest permissions
+the app uses: `INTERNET`, `RECORD_AUDIO`, and the Android 11+ speech-service
+package-visibility query), so CI and local builds work directly from a fresh
+checkout:
+
 ```bash
 cd apps/mobile
 flutter pub get
@@ -86,6 +91,10 @@ The release workflow in `codemagic.yaml` deliberately runs **without**
   published as an artifact for physical UI/UX testing.
 - `oppa-mobile-release` — release APK **without** demo defines; runs the full
   test suite first so the compile-time-off tripwires execute.
+
+Both workflows verify the committed `android/` platform folder exists before
+building (a clear error instead of the confusing Gradle file-not-found failure
+if it is ever deleted from a branch).
 
 No signing credentials are required for debug builds; release signing expects
 the CodeMagic `keystore` variable group (documented inline) before store

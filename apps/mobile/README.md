@@ -52,8 +52,9 @@ flutter build apk --debug --dart-define=OPPA_DEMO_MODE=true
 
 Details and guardrails: `docs/MOBILE_DEMO_BUILD.md`. Codemagic workflows
 (`oppa-mobile-demo`, `oppa-mobile-release`) live in the root `codemagic.yaml`;
-Android platform scaffolding is generated on demand with
-`sh ./scripts/prepare_android.sh`.
+the Android platform folder (`android/`) is committed so CI builds are
+reproducible — `sh ./scripts/prepare_android.sh` remains available to
+regenerate it if it is ever removed or a new platform is added.
 
 ## Security model
 
@@ -82,9 +83,9 @@ secrets — see the root `CODEX_HANDOFF.md`).
 
 | Gate | Status |
 |---|---|
-| `flutter analyze` | NOT RUN — Flutter SDK unavailable in implementation environment |
-| `flutter test` | NOT RUN — same (new demo tests included: `test/demo_backend_test.dart`, `test/demo_mode_test.dart`) |
-| Android release build | NOT RUN — same; scaffold with `sh ./scripts/prepare_android.sh` first |
+| `flutter analyze` | PASS — No issues found (SDK at `/tmp/flutter`) |
+| `flutter test` | PASS — 38/38 (includes `test/demo_backend_test.dart`, `test/demo_mode_test.dart`) |
+| Android debug APK | Via Codemagic `oppa-mobile-demo` (committed `android/` platform); local device build BLOCKED — no Android SDK here |
 | Demo-mode safety | Verified by inspection + tripwire tests; demo OTP never leaves the app process |
 | Endpoint contract | Verified against `apps/api/src/modules/**/*-routes.ts` at implementation time |
 

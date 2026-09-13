@@ -1,5 +1,11 @@
 # Codemagic configuration for OPPA mobile (apps/mobile).
 #
+# The android/ platform folder IS COMMITTED (manifest permissions included),
+# so both workflows build directly from the checkout — no scaffolding step.
+# If a build ever fails with "failed to read android/app/build.gradle", the
+# platform folder was deleted from the branch: restore it (scripts/
+# prepare_android.sh regenerates it) rather than scaffolding mid-build.
+#
 # Workflows:
 #   oppa-mobile-demo    — DEBUG APK with compile-time demo mode enabled for
 #                         physical UI/UX testing without production OTP
@@ -31,6 +37,14 @@ workflows:
     scripts:
       - name: Flutter doctor
         script: flutter doctor -v
+      - name: Verify Android platform is committed
+        script: |
+          test -f apps/mobile/android/app/build.gradle.kts \
+            || { echo "apps/mobile/android is MISSING from this branch." \
+                   "It is a committed platform folder; restore it (see" \
+                   "scripts/prepare_android.sh) instead of scaffolding mid-build." >&2; \
+                 exit 1; }
+          echo "Android platform present."
       - name: Get packages
         script: cd apps/mobile && flutter pub get
       - name: Analyze
@@ -61,6 +75,14 @@ workflows:
     scripts:
       - name: Flutter doctor
         script: flutter doctor -v
+      - name: Verify Android platform is committed
+        script: |
+          test -f apps/mobile/android/app/build.gradle.kts \
+            || { echo "apps/mobile/android is MISSING from this branch." \
+                   "It is a committed platform folder; restore it (see" \
+                   "scripts/prepare_android.sh) instead of scaffolding mid-build." >&2; \
+                 exit 1; }
+          echo "Android platform present."
       - name: Get packages
         script: cd apps/mobile && flutter pub get
       - name: Analyze

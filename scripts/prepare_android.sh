@@ -1,9 +1,9 @@
 #!/bin/sh
-# One-time Android platform scaffolding for the OPPA Flutter app.
+# Android platform scaffolding for the OPPA Flutter app (fallback tool).
 #
-# The repository intentionally does NOT commit apps/mobile/android — Flutter
-# regenerates it, and committing it pins per-machine Gradle/AGP state. Run this
-# script once in any environment that has the Flutter SDK, then build:
+# apps/mobile/android IS COMMITTED (CI builds directly from the checkout).
+# This script exists to regenerate the platform folder if it is ever removed,
+# or to add a new platform (ios/ later):
 #
 #   sh ./scripts/prepare_android.sh
 #   cd apps/mobile && flutter build apk --debug --dart-define=OPPA_DEMO_MODE=true
