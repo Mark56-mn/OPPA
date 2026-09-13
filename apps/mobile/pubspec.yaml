@@ -18,7 +18,10 @@ dependencies:
   pointycastle: ^3.9.1
   # Voice-to-text + text-to-speech (on-device engines, honest degradation
   # when a device has no speech service installed).
-  speech_to_text: ^6.6.0
+  # ^7.0.0 minimum: 6.x compiles the legacy v1 Android embedding (Registrar),
+  # whose engine classes were removed in Flutter 3.29+ — the CI APK build
+  # failed on 6.6.0 with "Unresolved reference 'Registrar'".
+  speech_to_text: ^7.0.0
   flutter_tts: ^4.2.0
 
 dev_dependencies:

@@ -91,11 +91,11 @@ class VoiceService {
             onPartial(result.recognizedWords.trim());
           }
         },
-        localeId: localeId,
         listenOptions: stt.SpeechListenOptions(
           partialResults: true,
           cancelOnError: true,
           listenMode: stt.ListenMode.dictation,
+          localeId: localeId,
         ),
       );
     } catch (_) {
