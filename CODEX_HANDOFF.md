@@ -26,7 +26,7 @@ Durable resume state for autonomous Codex sessions. The next agent must read thi
 
 **NOT RUN / BLOCKED (environment)**: Codemagic build (needs the repo connected to a Codemagic project + owner account), Android APK build (no Android SDK/Java here) and device UI/UX testing (needs the built APK + a device). None of these were faked.
 
-**NEXT EXACT TASK**: (1) re-run the Codemagic `oppa-mobile-demo` workflow on commit `9e1bed7` or later — the missing-`android/` failure is fixed and the debug APK should now build; (2) install on a device and run the UI/UX acceptance pass; (3) merge `oppa-mobile-demo` → `main` manually after owner review (owner merge policy).
+**NEXT EXACT TASK**: (1) re-run the Codemagic `oppa-mobile-demo` workflow — TWO Codemagic failures already fixed: (a) missing `android/` platform (commit `9e1bed7`) and (b) toolchain skew — Codemagic `flutter: stable` moved ahead of the committed Gradle 8.12 wrapper and its plugin demanded Gradle ≥ 8.14 (also warned about AGP 9+ DSL); fixed by bumping `gradle-wrapper.properties` to Gradle 8.14 AND pinning both workflows to `flutter: 3.35.3` (the exact version the committed platform was scaffolded with — upgrade Flutter and Gradle together going forward); (2) install on a device and run the UI/UX acceptance pass; (3) merge `oppa-mobile-demo` → `main` manually after owner review (owner merge policy).
 
 ---
 

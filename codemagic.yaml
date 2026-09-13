@@ -27,8 +27,11 @@ workflows:
     name: OPPA Mobile — Demo (debug APK)
     max_build_duration: 30
     environment:
-      # Flutter version pinned for reproducible first-APK builds.
-      flutter: stable
+      # Pinned to the exact Flutter version the committed android/ platform was
+      # scaffolded with (the first Codemagic run failed because `stable` moved
+      # ahead of the committed Gradle wrapper). To upgrade Flutter: bump this
+      # pin AND gradle-wrapper.properties together, then re-run this workflow.
+      flutter: 3.35.3
       groups:
         - oppa_common
       vars:
@@ -67,7 +70,8 @@ workflows:
     name: OPPA Mobile — Release (no demo mode)
     max_build_duration: 45
     environment:
-      flutter: stable
+      # Same pin rationale as oppa-mobile-demo above.
+      flutter: 3.35.3
       groups:
         - oppa_common
         # Uncomment once signing credentials are provisioned in Codemagic:
