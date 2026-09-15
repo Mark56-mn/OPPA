@@ -2,7 +2,12 @@ import "dart:async";
 
 import "package:flutter/material.dart";
 
+import "../../core/api_client_base.dart";
+import "../../core/connectivity_service.dart";
+import "../../core/screen_data.dart";
 import "../../data/repositories.dart";
+import "../../design/locked_features.dart";
+import "../widgets/common.dart";
 
 /// OPPA-native incoming/outgoing call screen (Stage L/R).
 ///
@@ -273,6 +278,165 @@ class _CallButton extends StatelessWidget {
         const SizedBox(height: 4),
         Text(label, style: Theme.of(context).textTheme.labelSmall),
       ],
+    );
+  }
+}
+
+/// Calls tab (approved personal nav: Chats · Wallet · Calls · Me).
+/// V1 calls are per-conversation over the REST signaling lifecycle, so the
+/// tab lists conversations with one-tap voice call; video stays VISIBLE but
+/// LOCKED (honest roadmap, no fake dialing).
+class CallsTabScreen extends StatefulWidget {
+  const CallsTabScreen({
+    super.key,
+    required this.calls,
+    required this.conversations,
+    required this.connectivity,
+    required this.onOpenConversation,
+  });
+
+  final CallsRepository calls;
+  final ConversationsRepository conversations;
+  final ConnectivityService connectivity;
+  final void Function(Map conversation) onOpenConversation;
+
+  @override
+  State<CallsTabScreen> createState() => _CallsTabScreenState();
+}
+
+class _CallsTabScreenState extends State<CallsTabScreen> {
+  dynamic _state = const ViewLoading();
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _state = const ViewLoading());
+    // ConversationsRepository.list takes no args; ScreenDataSource expects
+    // Future<ApiResponse> Function(), so adapt with a closure.
+    Future<ApiResponse> fetch() => widget.conversations.list();
+    final source = ScreenDataSource<Map>(
+      connectivity: widget.connectivity,
+      fetch: fetch,
+      decode: (b) => (b as Map).cast<String, dynamic>(),
+      cacheKey: "conversations.list",
+    );
+    final result = await source.load();
+    if (mounted) setState(() => _state = result);
+  }
+
+  Future<void> _startCall(Map conversation, {required bool video}) async {
+    if (video) {
+      showLockedFeatureSheet(context, OppaFeature.videoCalls);
+      return;
+    }
+    final conversationId = "${conversation["id"] ?? ""}";
+    if (conversationId.isEmpty) return;
+    final r = await widget.calls.start(conversationId, video: false);
+    if (!mounted) return;
+    if (!r.isSuccess || r.body is! Map) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(r.errorCode ?? "Could not start the call")));
+      return;
+    }
+    final callId = "${(r.body as Map)["id"] ?? ""}";
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => CallScreen(
+            calls: widget.calls,
+            conversationId: conversationId,
+            callId: callId,
+            isCaller: true,
+            kind: "audio")));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text("Calls")),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Row(
+              children: [
+                const LockedChip(feature: OppaFeature.videoCalls),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    "Voice calls work today over low-bandwidth signaling.",
+                    style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurface
+                            .withValues(alpha: 0.6)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _load,
+              child: switch (_state) {
+                ViewLoading() => const StateViews.loading(),
+                ViewOffline() => const StateViews.empty(
+                    "Offline — calls need a connection"),
+                ViewError(:final message) =>
+                  StateViews.error(message, onRetry: _load),
+                ViewReady<Map>(:final data) => _list(data),
+                _ => const SizedBox.shrink(),
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _list(Map data) {
+    final theme = Theme.of(context);
+    final conversations = ((data["conversations"] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+    if (conversations.isEmpty) {
+      return const StateViews.empty(
+          "No conversations yet — start a chat first, then call from here");
+    }
+    return ListView.builder(
+      itemCount: conversations.length,
+      itemBuilder: (context, i) {
+        final c = conversations[i];
+        final title = "${c["title"] ?? "Direct chat"}";
+        return ListTile(
+          leading: CircleAvatar(
+            backgroundColor: theme.colorScheme.secondaryContainer,
+            child: Text(title.isEmpty ? "?" : title.characters.first.toUpperCase()),
+          ),
+          title: Text(title),
+          subtitle: Text("${c["kind"] == "group" ? "Group" : "Direct"} · voice call"),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: "Voice call",
+                icon: const Icon(Icons.call_outlined),
+                onPressed: () => _startCall(c, video: false),
+              ),
+              IconButton(
+                tooltip: "Video call — locked",
+                icon: Icon(Icons.videocam_off_outlined,
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.4)),
+                onPressed: () =>
+                    showLockedFeatureSheet(context, OppaFeature.videoCalls),
+              ),
+            ],
+          ),
+          onTap: () => widget.onOpenConversation(c),
+        );
+      },
     );
   }
 }

@@ -4,6 +4,40 @@
 Durable resume state for autonomous Codex sessions. The next agent must read this file together with `OPPA_MASTER_BUILD_SPEC.md`, `CODEX_AUTOPILOT.md`, `CODEX_BUILD_MAP.md` and the active task file.
 
 ## LAST UPDATED
+2026-09-15 (session 11, **UI ALIGNMENT TO OPPA PULSE REFERENCE + ANDROID VOICE FIXES**, branch `oppa-mobile-demo`) — **UI realigned to the approved OPPA Pulse reference boards (both uploaded sheets) with a vector brand kit, honest V1 feature locks, and the Android speech-capability failures fixed at the capability layer. No generated/approximated images: the OPPA Pulse orb is drawn in code (`CustomPaint`), keeping the APK lightweight (zero new image assets).**
+
+**Brand + theme (approved identity)**:
+- New `apps/mobile/lib/design/oppa_brand.dart` — `OppaPulsePainter` (glowing sphere + three woven light trails: blue/violet, magenta, amber), `OppaBrand.wordmarkBlock`, gradient constants. Pure vector; the splash/brand screens render the actual mark from the reference.
+- `oppa_themes.dart` token sets re-aligned to the "Choose Your OPPA Look" art: **OPPA Pulse** = brand violet on near-black (default look), **Fluid Africa** = warm amber/gold on deep brown, **Everyday OPPA** = clean green on white. Theme builder now also themes cards/dialogs/bottom-sheets (16–24px radii per the reference).
+
+**Onboarding rebuilt to the approved journey** (`auth_gate.dart`):
+Welcome (orb + "OPPA PULSE" + slogan) → phone (+234, honest OTP microcopy) → OTP (masked number, live "Resend code in 00:XX" countdown, friendly error mapping) → "Create your profile" (Type/Speak segmented control, tap-to-speak, **editable transcription**, spoken read-back) → **"You're all set!"** confirmation ("Your OPPA account is ready. Let's get you connected." + Start OPPA + Explore OPPA) → Home. The name is saved in `completeOnboarding()` when Start OPPA is tapped, so the confirmation step is genuinely visible. Theme picker ("Choose Your OPPA Look") lives on the welcome step with the approved look names.
+
+**Navigation aligned to the personal-app art** (`screens.dart`): bottom tabs are now **Chats · Wallet · Calls · Me** (was Home/Chats/Wallet/Me). Chats tab gained the reference header: search field + All/Unread/Groups/Businesses filter chips, full-screen search, translator shortcut, workspace switcher, new-chat FAB. Calls tab is new (`CallsTabScreen`): one-tap voice calls per conversation over the real REST signaling lifecycle; video stays visible-but-locked. Me tab is the approved "My Profile" page: avatar/name/phone header, Edit profile, Notifications/Settings/Help & Support rows, Devices & Sessions, locked 2FA/biometrics/storage rows, Appearance (look names + locked 4th look), Sign out. Workspace switcher consolidated into `workspace_switcher.dart` (single shared sheet; duplicates removed). The orphaned HomeScreen tab was removed with its duties moved to Me/Chats (Connect + Translator + Support + Notifications + Settings + Business switch all reachable from real UI).
+
+**Real data-shape bug fixed (prod parity)**: production conversations return `unreadCount` (postgres-conversation-repository.ts); the demo backend returned `unread`, so chat badges could never appear. Demo now returns `unreadCount` and the UI reads exactly that field (parity test added).
+
+**Locked-feature system** (`design/locked_features.dart`): `OppaFeature` enum with honest, plain-language explanations; `LockedFeatureTile`, `LockedChip`, `showLockedFeatureSheet` — non-V1 features stay VISIBLE (as the reference shows the full vision) but never fake success: group chats, video calls, USSD/bank-transfer funding, 2FA, biometric login, data/storage controls, the 4th (Dash) theme, open marketplace, games. Wired into Settings, Me, Wallet fund sheet, Calls tab, ThemePicker.
+
+**Android voice-to-text capability fixes** (`core/voice_service.dart`) — the reported "android capabilities issues":
+1. **Runtime mic permission is now requested** via `permission_handler` BEFORE `initialize()/listen()` — on Android 6+ the recognition service never starts without it; this was the primary breakage (the manifest declared RECORD_AUDIO but nothing ever asked).
+2. **Busy-engine guard**: `canListen` is false while a session is in flight; a leftover session is `stop()`ed before a new `listen()` (the Android plugin throws "already active" otherwise).
+3. **Locale resolution**: requested BCP-47 tags are checked against the engine's installed locales; exact match → use, language-part match (ha-NG → ha-GH) → use, no match → device default AND the UI says so ("No voice installed — listening in the device default language"). Requesting an unsupported tag previously made `listen()` fail silently.
+4. **Honest block reasons**: new `SttBlockReason` (permissionDenied / noSpeechService / busy / unknown) surfaced as plain-language messages in onboarding ("Microphone permission is off — allow it in Settings, or type your name"), chat dictation, and the translator. Never a silent dead mic.
+5. `VoiceAvailability` enum kept (tests/screens import it); `ensureReady()` re-renders the translator after checks complete.
+
+**Translator aligned to the "Voice Translator (Market Women)" board** (`translator_screen.dart`): brand header ("Speak · Translate · Connect"), Speak/Type segmented entry, existing offline phrasebook + honest no-translation note + Play/Send-to-chat kept unchanged functionally.
+
+**Wallet fund sheet**: Card (Paystack/Flutterwave) live; Bank Transfer + USSD shown as locked chips (approved art shows them; V1 does not fake them).
+
+**Verification (real SDK at /tmp/flutter)**: `flutter analyze` = **No issues found**; `flutter test` = **51 pass / 0 fail** (+2 skipped by design) — includes the new demo/prod `unreadCount` parity test; `flutter test --dart-define=OPPA_DEMO_MODE=true test/demo_mode_test.dart` = 4/4 (CI runs this exact step before the APK build). Startup/flow widget tests updated to the approved copy (Continue / Verify / Create your profile / You're all set! / Chats·Wallet·Calls·Me). The new resend-countdown exposed a **timer leak (real bug)**: the periodic Stream was never cancelled — fixed with a cancellable `StreamSubscription` in dispose.
+
+**BLOCKED (unchanged, genuine)**: APK build + on-device verification still require Codemagic + a device (no Java/Android SDK/emulator in this sandbox). The `oppa-mobile-demo` workflow is unchanged and will run the same gates locally proven here.
+
+**NEXT EXACT TASK**: re-run the Codemagic `oppa-mobile-demo` workflow on this commit, install, and verify: brand welcome → phone → OTP 000000 → **speak-or-type profile** → You're all set → Home; check **Chats/Wallet/Calls/Me** tabs, the locked rows (2FA, video, USSD…) show the honest "coming later" sheet, and the translator requests mic permission on first Speak. Compare visuals against the two reference boards.
+
+---
+
 2026-09-13 (session 10, **URGENT ANDROID APK STARTUP FAILURE INVESTIGATION**, branch `oppa-mobile-demo`) — **ROOT CAUSE FOUND AND FIXED (code-proven, not a guess): the first APK hung on the loading spinner because `app.dart` constructed `SecureTokenStore()` with NO storage, and `SessionStore.bootstrap()` → `tokens.refreshToken()` → `_require()` threw `StateError("SecureTokenStore is not configured")` — an uncaught async error inside initState()'s fire-and-forget future, so no phase transition ever fired and the UI stayed on `AuthPhase.unknown`'s `CircularProgressIndicator()` forever. This was a STARTUP-CRITICAL bug from the very first commit (`d68969b`, where the class was born with the nullable-storage + throw design), latent because no widget test ever pumped `OppaApp` with the real `SecureTokenStore`.**
 
 **Why it was certain (not a guess)**: every step of the chain is in the code — `SecureTokenStore({FlutterSecureStorage? storage})` leaves `_storage` null when constructed bare; `_require()` throws exactly then; `bootstrap()` had no try/catch and no timeout; `_setPhase` was only reached on success; `app.dart` rendered the spinner for `AuthPhase.unknown` with no exit. A debug APK therefore always hung, independent of demo mode, manifest, Gradle, or plugins.

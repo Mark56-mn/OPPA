@@ -5,6 +5,7 @@ import "../../core/device_key_manager.dart";
 import "../../core/screen_data.dart";
 import "../../core/session_store.dart";
 import "../../data/repositories.dart";
+import "../../design/locked_features.dart";
 import "../widgets/common.dart";
 
 /// Wallet tab. Financial truth lives on the server: this screen renders
@@ -352,14 +353,22 @@ class _FundSheetState extends State<_FundSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Fund methods (approved art: Card live; Bank Transfer/USSD visible
+          // but locked — tapping one explains the roadmap, nothing is faked).
           SegmentedButton<String>(
             segments: const [
-              ButtonSegment(value: "paystack", label: Text("Paystack")),
+              ButtonSegment(value: "paystack", label: Text("Card")),
               ButtonSegment(value: "flutterwave", label: Text("Flutterwave")),
             ],
             selected: {_provider},
             onSelectionChanged: (s) => setState(() => _provider = s.first),
           ),
+          const SizedBox(height: 8),
+          const Row(children: [
+            LockedChip(feature: OppaFeature.bankTransfers),
+            SizedBox(width: 8),
+            LockedChip(feature: OppaFeature.ussdFunding),
+          ]),
           const SizedBox(height: 12),
           TextField(
               controller: _amount,

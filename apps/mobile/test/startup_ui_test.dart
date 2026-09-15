@@ -87,7 +87,9 @@ void main() {
       // land on the auth UI, never a bare CircularProgressIndicator.
       expect(find.byType(CircularProgressIndicator), findsNothing);
       expect(find.byType(AuthGate), findsOneWidget);
-      expect(find.text("Send code"), findsOneWidget);
+      expect(find.text("Continue"), findsOneWidget);
+      // Approved onboarding copy.
+      expect(find.text("Welcome to OPPA"), findsOneWidget);
     },
   );
 
@@ -143,9 +145,9 @@ void main() {
 
       // Authenticated from storage → the 4-tab personal shell, no AuthGate.
       expect(find.byType(AuthGate), findsNothing);
-      expect(find.widgetWithText(Tab, "Home"), findsOneWidget);
       expect(find.widgetWithText(Tab, "Chats"), findsOneWidget);
       expect(find.widgetWithText(Tab, "Wallet"), findsOneWidget);
+      expect(find.widgetWithText(Tab, "Calls"), findsOneWidget);
       expect(find.widgetWithText(Tab, "Me"), findsOneWidget);
     },
   );
@@ -160,26 +162,33 @@ void main() {
       await _pumpApp(tester, demoTransport: true);
       await tester.pumpAndSettle();
 
-      // 1. Phone entry.
+      // 1. Phone entry (approved flow: button says Continue).
       await tester.enterText(
           find.widgetWithText(TextField, "Phone number"), "+2348012345678");
-      await tester.tap(find.text("Send code"));
+      await tester.tap(find.text("Continue"));
       await tester.pumpAndSettle();
 
       // 2. OTP screen.
       expect(find.text("6-digit code"), findsOneWidget);
       await tester.enterText(
           find.widgetWithText(TextField, "6-digit code"), "000000");
-      await tester.tap(find.text("Verify and continue"));
+      await tester.tap(find.text("Verify"));
       await tester.pumpAndSettle();
 
-      // 3. Profile step appears (voice name entry screen).
-      expect(find.text("What should we call you?"), findsOneWidget);
-      // 4. Skip onboarding → the authenticated Home shell.
-      await tester.tap(find.text("Skip for now"));
+      // 3. Profile step appears (voice name entry screen, approved header).
+      expect(find.text("Create your profile"), findsOneWidget);
+      // 4. No name spoken → the button offers Skip; both paths reach the
+      // You're-all-set confirmation, then Home.
+      await tester.ensureVisible(find.text("Skip — add it later"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Skip — add it later"));
+      await tester.pumpAndSettle();
+      expect(find.text("You're all set!"), findsOneWidget);
+      await tester.ensureVisible(find.text("Start OPPA"));
+      await tester.tap(find.text("Start OPPA"), warnIfMissed: false);
       await tester.pumpAndSettle();
 
-      expect(find.widgetWithText(Tab, "Home"), findsOneWidget);
+      expect(find.widgetWithText(Tab, "Chats"), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
     },
   );

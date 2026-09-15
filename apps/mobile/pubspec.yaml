@@ -23,6 +23,8 @@ dependencies:
   # failed on 6.6.0 with "Unresolved reference 'Registrar'".
   speech_to_text: ^7.0.0
   flutter_tts: ^4.2.0
+  # Runtime microphone permission for speech-to-text on Android 6+.
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:

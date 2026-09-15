@@ -5,32 +5,58 @@ import "package:flutter/material.dart";
 import "../../core/api_client.dart";
 import "../../core/connectivity_service.dart";
 import "../../core/screen_data.dart";
+import "../../core/session_store.dart";
 import "../../core/translation_service.dart";
 import "../../core/voice_service.dart";
 import "../../data/repositories.dart";
+import "../../design/oppa_themes.dart";
 import "../widgets/common.dart";
 import "call_screen.dart";
+import "home_screens.dart" show ConnectScreen;
 import "translator_screen.dart";
+import "workspace_switcher.dart" show showWorkspaceSwitcher;
 
-/// Chats tab: conversation list with unread counts, cache-first.
+/// Chats tab (approved art): header with search + filter chips
+/// (All/Unread/Groups/Businesses), conversation rows with unread badges and
+/// the floating new-chat action.
 class ChatsScreen extends StatefulWidget {
   const ChatsScreen({
     super.key,
     required this.conversations,
     required this.connectivity,
+    required this.contacts,
+    required this.profiles,
+    required this.business,
+    required this.messages,
+    required this.notifications,
+    required this.session,
+    required this.themeId,
+    required this.onThemeChanged,
     required this.onOpenConversation,
   });
 
   final ConversationsRepository conversations;
   final ConnectivityService connectivity;
+  final ContactsRepository contacts;
+  final ProfileRepository profiles;
+  final BusinessRepository business;
+  final MessagesRepository messages;
+  final NotificationsRepository notifications;
+  final SessionStore session;
+  final OppaThemeId themeId;
+  final void Function(OppaThemeId) onThemeChanged;
   final void Function(Map conversation) onOpenConversation;
 
   @override
   State<ChatsScreen> createState() => _ChatsScreenState();
 }
 
+enum _ChatFilter { all, unread, groups, businesses }
+
 class _ChatsScreenState extends State<ChatsScreen> {
   dynamic _state = const ViewLoading();
+  _ChatFilter _filter = _ChatFilter.all;
+  String _query = "";
 
   @override
   void initState() {
@@ -50,11 +76,98 @@ class _ChatsScreenState extends State<ChatsScreen> {
     if (mounted) setState(() => _state = result);
   }
 
+  void _openConnect() {
+    Navigator.of(context).push(MaterialPageRoute(
+        builder: (_) => ConnectScreen(
+            contacts: widget.contacts,
+            conversations: widget.conversations,
+            business: widget.business,
+            profiles: widget.profiles)));
+  }
+
+  void _openTranslator() {
+    Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => TranslatorScreen(messages: widget.messages)));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Chats")),
-      body: RefreshIndicator(onRefresh: _load, child: _buildBody(context)),
+      appBar: AppBar(
+        title: const Text("Chats"),
+        actions: [
+          IconButton(
+            tooltip: "Translator",
+            onPressed: _openTranslator,
+            icon: const Icon(Icons.translate_rounded),
+          ),
+          IconButton(
+            tooltip: "Search chats",
+            onPressed: () => showSearch(
+                context: context,
+                delegate: _ConversationSearch(_state, widget.onOpenConversation)),
+            icon: const Icon(Icons.search_outlined),
+          ),
+          // Workspace switcher: Personal ↔ Business without logout.
+          IconButton(
+            tooltip: "Business workspace",
+            onPressed: () => showWorkspaceSwitcher(context,
+                session: widget.session,
+                business: widget.business,
+                connectivity: widget.connectivity),
+            icon: const Icon(Icons.swap_horiz_outlined),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        tooltip: "New chat",
+        onPressed: _openConnect,
+        child: const Icon(Icons.add_comment_outlined),
+      ),
+      body: Column(
+        children: [
+          // Filter chips (approved art: All · Unread · Groups · Businesses).
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    onChanged: (v) => setState(() => _query = v.trim().toLowerCase()),
+                    decoration: const InputDecoration(
+                      hintText: "Search chats…",
+                      prefixIcon: Icon(Icons.search_outlined),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                for (final f in _ChatFilter.values)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(switch (f) {
+                        _ChatFilter.all => "All",
+                        _ChatFilter.unread => "Unread",
+                        _ChatFilter.groups => "Groups",
+                        _ChatFilter.businesses => "Businesses",
+                      }),
+                      selected: _filter == f,
+                      onSelected: (_) => setState(() => _filter = f),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          Expanded(child: RefreshIndicator(onRefresh: _load, child: _buildBody(context))),
+        ],
+      ),
     );
   }
 
@@ -69,22 +182,54 @@ class _ChatsScreenState extends State<ChatsScreen> {
   }
 
   Widget _list(BuildContext context, Map data) {
-    final conversations = (data["conversations"] as List?) ?? const [];
+    final all = ((data["conversations"] as List?) ?? const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+    final conversations = all.where((c) {
+      final unread = (c["unreadCount"] as num?)?.toInt() ?? 0;
+      final kind = "${c["kind"] ?? "direct"}";
+      final title = "${c["title"] ?? "Direct chat"}".toLowerCase();
+      if (_query.isNotEmpty && !title.contains(_query)) return false;
+      return switch (_filter) {
+        _ChatFilter.all => true,
+        _ChatFilter.unread => unread > 0,
+        _ChatFilter.groups => kind == "group",
+        _ChatFilter.businesses => kind == "business",
+      };
+    }).toList();
     if (conversations.isEmpty) {
-      return const StateViews.empty("No chats yet — add a contact to start");
+      return StateViews.empty(_query.isEmpty && _filter == _ChatFilter.all
+          ? "No chats yet — tap + to add a contact"
+          : "No chats match this filter");
     }
     return ListView.builder(
       itemCount: conversations.length,
       itemBuilder: (context, i) {
-        final c = (conversations[i] as Map).cast<String, dynamic>();
+        final c = conversations[i];
+        // Production field name (unreadCount); demo backend matches it.
+        final unread = (c["unreadCount"] as num?)?.toInt() ?? 0;
+        final kind = "${c["kind"] ?? "direct"}";
         return ListTile(
           leading: CircleAvatar(
+            backgroundColor: Theme.of(context).colorScheme.secondaryContainer,
             child: Text(_initial(c["title"] as String? ?? c["id"] as String? ?? "?")),
           ),
-          title: Text(c["title"] as String? ?? "Direct chat"),
-          subtitle: Text(c["kind"] == "group" ? "Group" : "Direct"),
-          trailing: ((c["unread"] as num?)?.toInt() ?? 0) > 0
-              ? Badge(label: Text("${c["unread"]}"))
+          title: Text(
+            c["title"] as String? ?? "Direct chat",
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                fontWeight: unread > 0 ? FontWeight.w700 : FontWeight.w500),
+          ),
+          subtitle: Text(switch (kind) {
+            "group" => "Group",
+            "business" => "Business",
+            _ => "Direct",
+          }),
+          trailing: unread > 0
+              ? Badge(
+                  label: Text("$unread"),
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                )
               : null,
           onTap: () => widget.onOpenConversation(c),
         );
@@ -93,6 +238,56 @@ class _ChatsScreenState extends State<ChatsScreen> {
   }
 
   static String _initial(String s) => s.isEmpty ? "?" : s.characters.first.toUpperCase();
+}
+
+/// Full-screen search over the loaded conversation list (client-side over the
+/// server list; no invented data).
+class _ConversationSearch extends SearchDelegate<String> {
+  _ConversationSearch(this._state, this.onOpen);
+
+  final dynamic _state;
+  final void Function(Map) onOpen;
+
+  @override
+  List<Widget> buildActions(BuildContext context) => [
+        IconButton(icon: const Icon(Icons.clear), onPressed: () => query = ""),
+      ];
+
+  @override
+  Widget buildLeading(BuildContext context) =>
+      BackButton(onPressed: () => close(context, ""));
+
+  @override
+  Widget buildResults(BuildContext context) => _results(context);
+
+  @override
+  Widget buildSuggestions(BuildContext context) => _results(context);
+
+  Widget _results(BuildContext context) {
+    if (_state is! ViewReady<Map>) {
+      return const StateViews.empty("Chats are still loading…");
+    }
+    final list = (((_state as ViewReady<Map>).data["conversations"] as List?) ?? const [])
+        .whereType<Map>()
+        .where((c) => "${c["title"] ?? "Direct chat"}"
+            .toLowerCase()
+            .contains(query.toLowerCase()))
+        .toList();
+    if (list.isEmpty) return const StateViews.empty("No chats match");
+    return ListView(
+      children: [
+        for (final c in list)
+          ListTile(
+            leading: const Icon(Icons.chat_bubble_outline),
+            title: Text("${c["title"] ?? "Direct chat"}"),
+            onTap: () {
+              close(context, "");
+              onOpen(c.cast<String, dynamic>());
+            },
+          ),
+      ],
+    );
+  }
 }
 
 /// One conversation thread: real chat bubbles, voice-to-text composer,
@@ -254,8 +449,19 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     if (started) {
       setState(() => _listening = true);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text("Voice input is not available on this device")));
+      // Honest reason instead of a generic dead-end (permission vs missing
+      // speech service vs busy engine).
+      final message = switch (_voice.sttBlockReason) {
+        SttBlockReason.permissionDenied =>
+          "Microphone permission is off — allow it in Settings to dictate",
+        SttBlockReason.noSpeechService =>
+          "This device has no speech service — type your message instead",
+        SttBlockReason.busy =>
+          "Still finishing the last listen — try again in a second",
+        _ => "Voice input is not available right now",
+      };
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     }
   }
 

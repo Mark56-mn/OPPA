@@ -163,7 +163,7 @@ class DemoBackend implements ApiClientBase {
           "id": "conv-${person.id}",
           "title": person.name,
           "kind": "direct",
-          "unread": _unreadByConversation["conv-${person.id}"] ?? 0,
+          "unreadCount": _unreadByConversation["conv-${person.id}"] ?? 0,
         });
       case "/payments/initialize":
         return _ok({
@@ -237,7 +237,7 @@ class DemoBackend implements ApiClientBase {
         "id": "conv-group-${_epoch.millisecondsSinceEpoch}",
         "title": "${map["title"] ?? "Group"}",
         "kind": "group",
-        "unread": 0,
+        "unreadCount": 0,
       });
     }
     if (path.startsWith("/conversations/") && path.endsWith("/leave")) {
@@ -363,13 +363,15 @@ class DemoBackend implements ApiClientBase {
   }
 
   // -------------------------------------------------------- conversations
+  // Field names mirror the production API exactly (postgres-conversation-
+  // repository returns `unreadCount`); the UI must not special-case demo.
   List<Map<String, dynamic>> _conversationsJson() => [
         for (final c in _conversations)
           {
             "id": c.id,
             "title": c.title,
             "kind": c.kind,
-            "unread": _unreadByConversation[c.id] ?? 0,
+            "unreadCount": _unreadByConversation[c.id] ?? 0,
             "lastMessageAt": c.lastMessageAt,
           },
       ];

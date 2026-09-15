@@ -181,7 +181,18 @@ void main() {
       expect(blocked.errorCode, "BUSINESS_ORDER_SELF_INVALID");
     });
 
-    test("notifications list, unread count and preferences respond", () async {
+    test("conversation list uses the production field name unreadCount", () async {
+    final r = await api.get("/conversations");
+    expect(r.isSuccess, isTrue);
+    final list = ((r.body as Map)["conversations"] as List?) ?? const [];
+    expect(list, isNotEmpty);
+    for (final c in list.whereType<Map>()) {
+      expect(c.containsKey("unreadCount"), isTrue,
+          reason: "production returns unreadCount (not unread)");
+    }
+  });
+
+  test("notifications list, unread count and preferences respond", () async {
       final list = await api.get("/notifications");
       expect((list.body as Map)["notifications"], isA<List>());
 
