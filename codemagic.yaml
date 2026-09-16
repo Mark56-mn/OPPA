@@ -50,6 +50,8 @@ workflows:
           echo "Android platform present."
       - name: Get packages
         script: cd apps/mobile && flutter pub get
+      - name: Brand-asset guard (OPPA launcher/splash, not Flutter)
+        script: python3 tools/check_brand_assets.py
       - name: Analyze
         script: cd apps/mobile && flutter analyze --no-fatal-infos
       - name: Unit tests
@@ -91,6 +93,8 @@ workflows:
           echo "Android platform present."
       - name: Get packages
         script: cd apps/mobile && flutter pub get
+      - name: Brand-asset guard (OPPA launcher/splash, not Flutter)
+        script: python3 tools/check_brand_assets.py
       - name: Analyze
         script: cd apps/mobile && flutter analyze --no-fatal-infos
       - name: Unit tests (asserts demo mode is compile-time OFF)

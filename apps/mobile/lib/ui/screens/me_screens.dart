@@ -289,7 +289,11 @@ class _MeScreenState extends State<MeScreen> {
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => NotificationsScreen(
                           notifications: widget.notifications,
-                          connectivity: widget.connectivity))),
+                          connectivity: widget.connectivity,
+                          session: widget.session,
+                          business: widget.business,
+                          themeId: widget.themeId,
+                          onThemeChanged: widget.onThemeChanged))),
                 ),
                 ListTile(
                   leading: const Icon(Icons.settings_outlined),

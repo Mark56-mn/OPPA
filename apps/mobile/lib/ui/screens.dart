@@ -18,7 +18,7 @@ export "screens/auth_gate.dart";
 /// Business is NOT a personal tab: it is a separate workspace opened through
 /// the workspace switcher (one OPPA identity, Personal + Business workspaces,
 /// no logout needed to switch).
-class HomeShell extends StatelessWidget {
+class HomeShell extends StatefulWidget {
   const HomeShell({
     super.key,
     required this.session,
@@ -52,29 +52,44 @@ class HomeShell extends StatelessWidget {
   final void Function(OppaThemeId) onThemeChanged;
   final Future<void> Function() onSignOut;
 
+  @override
+  State<HomeShell> createState() => _HomeShellState();
+}
+
+class _HomeShellState extends State<HomeShell> {
+  /// Registered by [ChatsScreen] (its refresh thunk) so threads can trigger a
+  /// badge re-sync after they close. Nullable: set once the tab is built.
+  Future<void> Function()? _chatsRefresh;
+
   void _openConversation(BuildContext context, Map conversation) {
-    Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => ChatThreadScreen(
-            conversation: conversation,
-            messages: messages,
-            calls: calls,
-            connectivity: connectivity)));
+    Navigator.of(context)
+        .push(MaterialPageRoute(
+            builder: (_) => ChatThreadScreen(
+                conversation: conversation,
+                messages: widget.messages,
+                calls: widget.calls,
+                connectivity: widget.connectivity)))
+        .whenComplete(() {
+      // Returning from a thread: the thread marks its incoming messages read
+      // (POST /conversations/:id/read), so unread badges may have changed.
+      _chatsRefresh?.call();
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<ConnectState>(
-      stream: connectivity.stream,
+      stream: widget.connectivity.stream,
       builder: (context, _) {
         return DefaultTabController(
           length: 4,
           child: Scaffold(
             body: StreamBuilder<int>(
-              stream: queue.depthStream,
+              stream: widget.queue.depthStream,
               builder: (context, depthSnap) => Column(
                 children: [
                   StatusBanner(
-                    state: switch (connectivity.state) {
+                    state: switch (widget.connectivity.state) {
                       ConnectState.online => "online",
                       ConnectState.reconnecting => "reconnecting",
                       ConnectState.offline => "offline",
@@ -84,36 +99,37 @@ class HomeShell extends StatelessWidget {
                   Expanded(
                     child: TabBarView(children: [
                       ChatsScreen(
-                        conversations: conversations,
-                        connectivity: connectivity,
-                        contacts: contacts,
-                        profiles: profiles,
-                        business: business,
-                        messages: messages,
-                        notifications: notifications,
-                        session: session,
-                        themeId: themeId,
-                        onThemeChanged: onThemeChanged,
+                        conversations: widget.conversations,
+                        connectivity: widget.connectivity,
+                        contacts: widget.contacts,
+                        profiles: widget.profiles,
+                        business: widget.business,
+                        messages: widget.messages,
+                        notifications: widget.notifications,
+                        session: widget.session,
+                        themeId: widget.themeId,
+                        onThemeChanged: widget.onThemeChanged,
                         onOpenConversation: (c) => _openConversation(context, c),
+                        onRefreshChanged: (t) => _chatsRefresh = t,
                       ),
                       WalletScreen(
-                          wallet: wallet,
-                          session: session,
-                          connectivity: connectivity),
+                          wallet: widget.wallet,
+                          session: widget.session,
+                          connectivity: widget.connectivity),
                       CallsTabScreen(
-                          calls: calls,
-                          conversations: conversations,
-                          connectivity: connectivity,
+                          calls: widget.calls,
+                          conversations: widget.conversations,
+                          connectivity: widget.connectivity,
                           onOpenConversation: (c) => _openConversation(context, c)),
                       MeScreen(
-                          session: session,
-                          profiles: profiles,
-                          notifications: notifications,
-                          business: business,
-                          connectivity: connectivity,
-                          themeId: themeId,
-                          onThemeChanged: onThemeChanged,
-                          onSignOut: onSignOut),
+                          session: widget.session,
+                          profiles: widget.profiles,
+                          notifications: widget.notifications,
+                          business: widget.business,
+                          connectivity: widget.connectivity,
+                          themeId: widget.themeId,
+                          onThemeChanged: widget.onThemeChanged,
+                          onSignOut: widget.onSignOut),
                     ]),
                   ),
                 ],

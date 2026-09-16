@@ -56,6 +56,26 @@ the Android platform folder (`android/`) is committed so CI builds are
 reproducible — `sh ./scripts/prepare_android.sh` remains available to
 regenerate it if it is ever removed or a new platform is added.
 
+## Brand assets (OPPA Pulse)
+
+The launcher icon, adaptive-icon layers and the launch splash are the OPPA
+Pulse mark (glowing orb with three woven trails), rendered **from the same
+geometry as the in-app vector painter** (`lib/design/oppa_brand.dart`). They
+are generated PNGs (~250 KB total — no large binary assets):
+
+```bash
+python3 tools/generate_oppa_icons.py          # regenerate after brand changes
+python3 tools/generate_oppa_icons.py --check  # CI-style freshness check
+```
+
+Requires `python3 -m pip install pillow numpy`. Never hand-edit the PNGs.
+
+- `android/.../mipmap-*/ic_launcher.png` — launcher icons
+- `android/.../mipmap-anydpi-v26/ic_launcher.xml` — adaptive icon
+  (foreground `drawable/oppa_icon_foreground.png` on `@color/oppa_launch_bg`)
+- `android/.../drawable/oppa_launch.png` — centered OPPA PULSE splash shown
+  by `LaunchTheme` until Flutter draws its first frame
+
 ## Security model
 
 - Access/refresh tokens and the device private key live in

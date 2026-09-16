@@ -72,6 +72,10 @@ class BusinessShell extends StatefulWidget {
 class _BusinessShellState extends State<BusinessShell> {
   int _tab = 0;
 
+  /// Registered by [BusinessDashboardScreen] so the app-bar refresh button
+  /// triggers the dashboard's real fetch.
+  Future<void> Function()? _dashboardRefresh;
+
   @override
   Widget build(BuildContext context) {
     final tabs = [
@@ -82,7 +86,8 @@ class _BusinessShellState extends State<BusinessShell> {
           businessName: widget.businessName,
           onOpenOrders: () => setState(() => _tab = 1),
           onOpenProducts: () => setState(() => _tab = 2),
-          onOpenMore: () => setState(() => _tab = 3)),
+          onOpenMore: () => setState(() => _tab = 3),
+          onRefreshChanged: (t) => _dashboardRefresh = t),
       BusinessOrdersScreen(
           business: widget.business,
           connectivity: widget.connectivity,
@@ -112,7 +117,9 @@ class _BusinessShellState extends State<BusinessShell> {
             if (_tab == 0)
               IconButton(
                 tooltip: "Refresh",
-                onPressed: () {}, // dashboard auto-refreshes on pull
+                // Real refresh: re-triggers the dashboard's live fetch through
+                // the callback it registers at initState. No dead buttons.
+                onPressed: () => _dashboardRefresh?.call(),
                 icon: const Icon(Icons.refresh_outlined),
               ),
           ],
@@ -189,6 +196,7 @@ class BusinessDashboardScreen extends StatefulWidget {
     required this.onOpenOrders,
     required this.onOpenProducts,
     required this.onOpenMore,
+    this.onRefreshChanged,
   });
 
   final BusinessRepository business;
@@ -198,6 +206,7 @@ class BusinessDashboardScreen extends StatefulWidget {
   final VoidCallback onOpenOrders;
   final VoidCallback onOpenProducts;
   final VoidCallback onOpenMore;
+  final void Function(Future<void> Function())? onRefreshChanged;
 
   @override
   State<BusinessDashboardScreen> createState() =>
@@ -214,6 +223,7 @@ class _BusinessDashboardScreenState extends State<BusinessDashboardScreen> {
   void initState() {
     super.initState();
     _load();
+    widget.onRefreshChanged?.call(_load);
   }
 
   Future<void> _load() async {

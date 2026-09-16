@@ -15,7 +15,9 @@ import "demo_mode.dart";
 /// DemoMode.enabled is true (compile-time), and the startup guard refuses to
 /// boot it in a product build (app.dart).
 class DemoBackend implements ApiClientBase {
-  DemoBackend({this.latency = const Duration(milliseconds: 250)});
+  DemoBackend({this.latency = const Duration(milliseconds: 250)}) {
+    _seedNotifications();
+  }
 
   /// Small artificial latency so loading/progress states are visible and
   /// honest (the UI is exercised with its real async flow).
@@ -441,9 +443,22 @@ class DemoBackend implements ApiClientBase {
             "createdAt": m.createdAt,
             "mine": true,
             "readAt": _readMessageIds.contains(m.id) ? m.createdAt : null,
+            // Production parity: at least one OTHER member has read it
+            // (demo recipients auto-read a few seconds after delivery).
+            "readByAny": _otherRead(m),
           },
     ];
     return base;
+  }
+
+  /// Whether someone other than the sender has read [m]. Demo recipients read
+  /// their messages 3 seconds after the send was confirmed — deterministic,
+  /// honest (it mirrors the server receipt model), and testable.
+  bool _otherRead(_SentMessage m) {
+    final sentAt = DateTime.parse(m.createdAt);
+    final readCutoff = sentAt.add(const Duration(seconds: 3));
+    return _readMessageIds.contains(m.id) ||
+        DateTime.now().isAfter(readCutoff);
   }
 
   List<Map<String, dynamic>> _seedMessages(String conversationId) {
@@ -484,12 +499,15 @@ class DemoBackend implements ApiClientBase {
       return _err("WALLET_INSUFFICIENT_FUNDS", 409);
     }
     _balanceMinor -= amount;
+    // Field names mirror production exactly (postgres-wallet-repository):
+    // type credit|debit + balanceAfterMinor. No demo-only keys.
     _transactions.insert(0, {
       "id": "txn-${_epoch.microsecondsSinceEpoch}",
-      "direction": "out",
+      "type": "debit",
       "amountMinor": amount,
+      "balanceAfterMinor": _balanceMinor,
       "reference": "${map["reference"] ?? "demo-transfer"}",
-      "status": "completed",
+      "description": "Transfer",
       "createdAt": DateTime.now().toIso8601String(),
     });
     return _ok({"status": "completed", "balanceMinor": _balanceMinor});
@@ -597,10 +615,11 @@ class DemoBackend implements ApiClientBase {
       order["status"] = "paid";
       _transactions.insert(0, {
         "id": "txn-${_epoch.microsecondsSinceEpoch}",
-        "direction": "out",
+        "type": "debit",
         "amountMinor": amount,
+        "balanceAfterMinor": _balanceMinor,
         "reference": "order:$orderId",
-        "status": "completed",
+        "description": "Order payment",
         "createdAt": DateTime.now().toIso8601String(),
       });
       return _ok(order);
@@ -797,6 +816,71 @@ class DemoBackend implements ApiClientBase {
             "readAt": _readNotifications.contains("${n["id"]}") ? n["createdAt"] : null,
           },
       ];
+
+  /// Deterministic seed matching the production payload contract
+  /// ({category, title, body, metadata, createdAt} + readAt) so the demo APK
+  /// exercises list/badges/mark-read/filters exactly like the live API.
+  void _seedNotifications() {
+    if (_notifications.isNotEmpty) return;
+    _notifications.addAll([
+      {
+        "id": "notif-demo-msg-1",
+        "category": "message",
+        "title": "New message from Amara",
+        "body": "Are you coming today?",
+        "metadata": {"conversationId": "conv-demo-user-amara"},
+        "createdAt": "2026-01-15T08:12:00Z",
+      },
+      {
+        "id": "notif-demo-pay-1",
+        "category": "payment",
+        "title": "Payment received",
+        "body": "Mama sent you N5,000",
+        "metadata": {},
+        "createdAt": "2026-01-15T07:40:00Z",
+      },
+      {
+        "id": "notif-demo-wallet-1",
+        "category": "wallet",
+        "title": "Wallet top-up successful",
+        "body": "Your wallet was funded with N20,000",
+        "metadata": {},
+        "createdAt": "2026-01-14T20:00:00Z",
+      },
+      {
+        "id": "notif-demo-biz-1",
+        "category": "business",
+        "title": "Order update",
+        "body": "Your order from Ada's Boutique is ready",
+        "metadata": {},
+        "createdAt": "2026-01-14T18:05:00Z",
+      },
+      {
+        "id": "notif-demo-sec-1",
+        "category": "security",
+        "title": "Security alert",
+        "body": "Your password was changed",
+        "metadata": {},
+        "createdAt": "2026-01-13T21:30:00Z",
+      },
+      {
+        "id": "notif-demo-dev-1",
+        "category": "device",
+        "title": "New device sign-in",
+        "body": "OPPA was signed in on a new Android phone",
+        "metadata": {},
+        "createdAt": "2026-01-13T09:15:00Z",
+      },
+      {
+        "id": "notif-demo-sup-1",
+        "category": "support",
+        "title": "Support update",
+        "body": "Your report was reviewed by our team",
+        "metadata": {},
+        "createdAt": "2026-01-12T14:00:00Z",
+      },
+    ]);
+  }
 
   Map<String, dynamic> _preferencesJson() => {
         for (final k in const ["message", "wallet", "payment", "security", "device", "business", "support"])

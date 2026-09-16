@@ -33,6 +33,7 @@ class ChatsScreen extends StatefulWidget {
     required this.themeId,
     required this.onThemeChanged,
     required this.onOpenConversation,
+    this.onRefreshChanged,
   });
 
   final ConversationsRepository conversations;
@@ -46,6 +47,10 @@ class ChatsScreen extends StatefulWidget {
   final OppaThemeId themeId;
   final void Function(OppaThemeId) onThemeChanged;
   final void Function(Map conversation) onOpenConversation;
+
+  /// Called with the screen's refresh thunk so the shell can trigger a list
+  /// reload after a thread closes (badges may have changed via mark-read).
+  final void Function(Future<void> Function())? onRefreshChanged;
 
   @override
   State<ChatsScreen> createState() => _ChatsScreenState();
@@ -62,6 +67,7 @@ class _ChatsScreenState extends State<ChatsScreen> {
   void initState() {
     super.initState();
     _load();
+    widget.onRefreshChanged?.call(_load);
   }
 
   Future<void> _load() async {
@@ -324,6 +330,10 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
   final Map<String, TranslationResult> _translations = {};
   String _myTranslateTarget = "en";
 
+  /// Older history fetched by scroll-to-top pagination (newest-first list).
+  bool _loadingOlder = false;
+  bool _hasMoreOlder = true;
+
   String get _conversationId => widget.conversation["id"] as String;
 
   @override
@@ -332,6 +342,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
     _load();
     _checkIncomingCall();
     _voice.ensureReady();
+    _scroll.addListener(_onScroll);
   }
 
   @override
@@ -391,6 +402,7 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
         _history = list.map((e) => (e as Map).cast<String, dynamic>()).toList();
         _loading = false;
       });
+      _markIncomingRead();
     } else if (response.kind == AttemptKind.networkError ||
         response.kind == AttemptKind.timeout) {
       setState(() {
@@ -402,6 +414,75 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
         _error = response.errorCode ?? "Could not load messages";
         _loading = false;
       });
+    }
+  }
+
+  /// Read receipts: opening a thread marks every incoming message up to the
+  /// newest one read (server-side, POST /conversations/:id/read). Fire and
+  /// forget — a failure must never block reading the chat; the unread badge
+  /// simply persists until the next visit.
+  void _markIncomingRead() {
+    // History is newest-first; the first non-mine message is the latest one
+    // the user has actually seen on this screen.
+    String? upTo;
+    for (final m in _history) {
+      if (m["mine"] == true) continue;
+      final id = m["id"];
+      if (id is String && id.isNotEmpty) {
+        upTo = id;
+        break;
+      }
+    }
+    if (upTo == null) return; // Nothing incoming to acknowledge.
+    widget.messages.markRead(_conversationId, upTo: upTo).then((r) {
+      if (mounted && !r.isSuccess) {
+        debugPrint("OPPA.chat: markRead failed (${r.errorCode ?? r.kind.name})");
+      }
+    });
+  }
+
+  /// Scroll-to-top pagination: the list is rendered newest-first, so reaching
+  /// the far end of the list means the user wants OLDER messages. Fetches the
+  /// next page with the `before` cursor the API already supports and appends
+  /// it. A failed page fetch keeps the loaded history (honest, no data loss).
+  void _onScroll() {
+    if (!_scroll.hasClients || !_hasMoreOlder || _loadingOlder) return;
+    if (_scroll.position.pixels < _scroll.position.maxScrollExtent - 200) {
+      return;
+    }
+    _loadOlder();
+  }
+
+  Future<void> _loadOlder() async {
+    if (_history.isEmpty || _loadingOlder) return;
+    final oldest = _history.last["createdAt"];
+    if (oldest is! String || oldest.isEmpty) return;
+    setState(() => _loadingOlder = true);
+    final response =
+        await widget.messages.history(_conversationId, before: oldest);
+    if (!mounted) return;
+    setState(() => _loadingOlder = false);
+    if (response.isSuccess && response.body is Map) {
+      final page = (((response.body as Map)["messages"] as List?) ?? const [])
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList();
+      // Guard against duplicates/loops: a shorter page means we hit the start.
+      if (page.isEmpty) {
+        setState(() => _hasMoreOlder = false);
+        return;
+      }
+      final known = _history.map((m) => "${m["id"]}").toSet();
+      final fresh =
+          page.where((m) => !known.contains("${m["id"]}")).toList();
+      setState(() {
+        _history.addAll(fresh);
+        if (page.length < 50) _hasMoreOlder = false;
+      });
+    } else if (response.kind == AttemptKind.clientError ||
+        response.kind == AttemptKind.serverError) {
+      // Server said no (e.g. FORBIDDEN) — stop asking instead of retry-looping.
+      setState(() => _hasMoreOlder = false);
     }
   }
 
@@ -646,7 +727,9 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
 }
 
 /// A chat bubble with sender alignment, status, and translate/read-aloud
-/// actions. Sent state is honest: pending shows a clock, confirmed a check.
+/// actions. Sent state is honest and server-derived: pending shows a clock,
+/// confirmed a single check, and read (≥1 other member's server receipt) a
+/// double check — never fabricated client-side.
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
@@ -667,6 +750,8 @@ class _MessageBubble extends StatelessWidget {
     final theme = Theme.of(context);
     final body = "${message["body"] ?? ""}";
     final time = "${message["createdAt"] ?? ""}";
+    final pending = message["status"] == "pending";
+    final readByAny = message["readByAny"] == true;
     final translated = translation;
     return Align(
       alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
@@ -722,6 +807,26 @@ class _MessageBubble extends StatelessWidget {
                             .withValues(alpha: 0.6)),
                   ),
                   const SizedBox(width: 6),
+                  if (isMine) ...[
+                    // Receipt state (own messages only): pending clock → sent
+                    // check → read double-check. Driven by server fields.
+                    Icon(
+                      pending
+                          ? Icons.schedule
+                          : readByAny
+                              ? Icons.done_all
+                              : Icons.done,
+                      size: 14,
+                      color: (isMine
+                              ? theme.colorScheme.onPrimary
+                              : theme.colorScheme.onSurface)
+                          .withValues(
+                              alpha: pending
+                                  ? 0.5
+                                  : (readByAny ? 0.95 : 0.6)),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
                   InkWell(
                     onTap: onTranslateSpeak,
                     child: Icon(Icons.volume_up_outlined,

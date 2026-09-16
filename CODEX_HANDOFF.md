@@ -4,6 +4,42 @@
 Durable resume state for autonomous Codex sessions. The next agent must read this file together with `OPPA_MASTER_BUILD_SPEC.md`, `CODEX_AUTOPILOT.md`, `CODEX_BUILD_MAP.md` and the active task file.
 
 ## LAST UPDATED
+2026-09-16 (session 12, **NEXT-APK V1 COMPLETION PASS — §9/§10/§11/§13/§14/§16 CLOSED**, branch `oppa-mobile-demo`) — **Executed CODEX_NEXT_APK_V1_COMPLETION_TASK.md sections 6/9/10/11/13/14/15/16 to completion: real mark-read receipts end-to-end, honest call states, notification tap-to-context + preferences, server-authoritative wallet with transaction detail, and zero dead navigation. All gates green: flutter analyze clean, 53 mobile tests pass, 155 API tests pass, brand guard passes.**
+
+**§6 Branding (completed this session)**: OPPA Pulse launcher icons (all densities) + adaptive icon (API 26+) + brand launch splash — all rendered procedurally by `tools/generate_oppa_icons.py` from the same orb geometry as the in-app vector painter (no invented art, ~250 KB total). New `tools/check_brand_assets.py` CI guard (wired into BOTH codemagic workflows before the APK builds) fails the build if any Flutter-default launcher icon returns, verified in both directions (OPPA art passes; wrong pin / unparsable default fails).
+
+**§9 Messaging (audit + fixes)**:
+- REAL BUG: `MessagesRepository.markRead()` and the API route `POST /conversations/:conversationId/read` existed but NO SCREEN EVER CALLED THEM — unread badges could never clear in production. Fixed: `ChatThreadScreen._load()` now marks read up to the newest incoming message (fire-and-forget, failure never blocks reading; logged via `OPPA.chat:` diagnostics).
+- REAL BUG (prod parity): production message history had no `mine` field (demo had it) so bubble alignment broke in production. Fixed server-side: the messages route projects `mine` per caller (never leaks identity beyond sender id).
+- Read receipts now rendered honestly on own bubbles: clock = pending, one check = sent, double-check = read. Backed by a new server-computed `readByAny` field (postgres: EXISTS any OTHER member's receipt with read_at) — nothing fabricated client-side.
+- Scroll-to-top pagination wired: `_onScroll` fetches older pages with the existing `before` cursor (dedup by id, stops honestly on short page/server refusal). No data loss on fetch failure.
+- Tests: new `chat_mark_read_test.dart` (recording transport asserts the exact POST /read call + upToMessageId = newest incoming; negative case: no incoming → no request). API test added: message-history ownership projection (`m-from-other`→false, `m-from-me`→true).
+
+**§10 Notifications (audit + fixes)**: category filters (All/Messages/Payments/System per the approved art), tap-to-context routing (message → its conversation thread via metadata.conversationId; business → Business workspace; payment/wallet → Wallet tab; security/device → Devices; support → Help) — personal taps never open business context. Preferences rows persisted via the real preferences endpoint. Demo backend now seeds deterministic notifications across ALL SEVEN production categories (message/payment/wallet/business/security/device/support) with production payload contract `{category,title,body,metadata,createdAt}` + readAt — the demo notification screen was previously ALWAYS EMPTY, making §10 untestable in the demo APK. Seeded conversationId fixed to a real demo conversation.
+
+**§11 Calls**: lifecycle verified real (invite/answer/decline/busy/hangup/failed via server events; 2s polling; safe auto-hangup on back-out). REAL §11 VIOLATION FIXED: the call screen said "Connected" and showed fake media copy ("Media quality adapts…") while the app has NO WebRTC client stack (backend signaling relay exists; no flutter_webrtc dependency). Now honest: "Call answered — audio media coming in a later release" + explicit note that ring/answer/decline/hang-up are real and server-confirmed but NO audio is transmitted. Video remains visible-but-locked (matches V1 capability). Test updated to assert the honest string.
+
+**§13/§16 Wallet + offline**: balance card now labels cached data honestly — "Last known balance (offline) / Will update when you reconnect" (ScreenDataSource already tracked fromCache; the UI ignored it). Transaction list rebuilt on the PRODUCTION field contract (type credit|debit, amountMinor, balanceAfterMinor, reference, description, createdAt) — the demo was emitting demo-only keys (direction/status), a parity bug. NEW transaction detail bottom sheet: money-in/out, balance-after, reference, date, "Confirmed by the OPPA server" — read-only, zero invention. Bank Transfer/USSD remain visible-but-locked. Transfers keep the real challenge → ECDSA device-signature → server confirmation chain; nothing queued or faked offline.
+
+**§14/§15 Business + settings**: business More rows verified live (staff/customers/analytics/payouts/support all real screens on real endpoints). DEAD BUTTON FIXED: the business app-bar refresh icon was `onPressed: () {}` — now triggers the dashboard's real fetch via a registered callback (same pattern as chats refresh). No product edit/delete buttons exist because no such endpoints exist server-side (honest by construction). Merchant cannot order against own business (server-enforced, documented in repositories.dart).
+
+**Verification (all executed this session)**:
+| Gate | Result |
+|---|---|
+| `flutter analyze` | No issues found |
+| `flutter test` | 53 pass / 0 fail (+2 by-design skips) |
+| `bun run typecheck` (api) | clean |
+| `bun test` (api) | 155 pass / 0 fail / 8 skip |
+| messaging+wallet suites | 14/14 incl. 2 new tests |
+| `tools/check_brand_assets.py` | PASS (launcher+adaptive+splash OPPA-branded) |
+
+**BLOCKED (unchanged, environmental)**: (1) APK build/on-device verification — no Java/Android SDK/emulator in sandbox; Codemagic workflow is wired and will run the same gates. (2) 3 DB-hardening + 5 auth-integration API tests SKIP because `DATABASE_URL` is not present in this session's shell (task §17's live-DB checks need it; they pass when run where the secret exists). No other provider is blocking.
+
+**NEXT EXACT TASK**: (1) run the Codemagic `oppa-mobile-demo` workflow; verify Analyze/Unit tests/brand-guard/define-positive steps all green and the APK artifact downloads; (2) install on device: launch → AuthGate; logcat `OPPA.session:` shows signedOut; demo phone → 000000 → profile → Home; open Amara thread → back → badge cleared (mark-read on device); Wallet shows Last-known-balance label in airplane mode; call screen shows the honest "no audio transmitted" note; (3) after the device pass, merge `oppa-mobile-demo` → `main` per owner policy.
+
+---
+
+## PREVIOUS SESSION (11)
 2026-09-15 (session 11, **UI ALIGNMENT TO OPPA PULSE REFERENCE + ANDROID VOICE FIXES**, branch `oppa-mobile-demo`) — **UI realigned to the approved OPPA Pulse reference boards (both uploaded sheets) with a vector brand kit, honest V1 feature locks, and the Android speech-capability failures fixed at the capability layer. No generated/approximated images: the OPPA Pulse orb is drawn in code (`CustomPaint`), keeping the APK lightweight (zero new image assets).**
 
 **Brand + theme (approved identity)**:

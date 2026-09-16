@@ -184,21 +184,136 @@ class _WalletScreenState extends State<WalletScreen> {
       ViewLoading() => const StateViews.loading(),
       ViewOffline() => const StateViews.empty("Offline — balances are only shown when confirmed by the server"),
       ViewError(:final message) => StateViews.error(message, onRetry: _load),
-      ViewReady<Map>(:final data) =>
-        ((((data["transactions"] as List?) ?? const []).isEmpty))
-            ? const StateViews.empty("No transactions yet")
-            : Column(
-                children: [
-                  for (final t in (data["transactions"] as List))
-                    ListTile(
-                      leading: const Icon(Icons.swap_horiz_outlined),
-                      title: Text("${((t as Map)["amountMinor"] as num? ?? 0) / 100}"),
-                      subtitle: Text("${t["reference"] ?? ""}"),
-                    ),
-                ],
-              ),
+      ViewReady<Map>(:final data) => _TransactionList(
+          data: data, onOpen: (t) => _showTransactionDetail(context, t)),
       _ => const SizedBox.shrink(),
     };
+  }
+
+  void _showTransactionDetail(BuildContext context, Map t) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (_) => _TransactionDetailSheet(transaction: t),
+    );
+  }
+}
+
+/// Transaction list rows using the production field contract
+/// (type credit|debit, amountMinor, balanceAfterMinor, reference, createdAt).
+class _TransactionList extends StatelessWidget {
+  const _TransactionList({required this.data, required this.onOpen});
+
+  final Map data;
+  final void Function(Map) onOpen;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final items = (data["transactions"] as List?) ?? const [];
+    return Column(
+      children: [
+        for (final t in items)
+          ListTile(
+            leading: Icon(
+              "${(t as Map)["type"] ?? "debit"}" == "credit"
+                  ? Icons.arrow_downward_rounded
+                  : Icons.arrow_upward_rounded,
+              color: "${t["type"] ?? "debit"}" == "credit"
+                  ? Colors.green.shade700
+                  : theme.colorScheme.error,
+            ),
+            title: Text(
+              "${"${t["type"] ?? "debit"}" == "credit" ? "+" : "−"} ₦${_minor((t["amountMinor"] as num?)?.toInt() ?? 0)}",
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(
+              "${t["description"] ?? t["reference"] ?? ""} · ${_when(t["createdAt"])}",
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onTap: () => onOpen(t),
+          ),
+      ],
+    );
+  }
+
+  static String _minor(int minor) {
+    final naira = minor ~/ 100;
+    final kobo = minor % 100;
+    return "$naira.${kobo.toString().padLeft(2, "0")}";
+  }
+
+  static String _when(dynamic createdAt) {
+    final s = "$createdAt";
+    if (s.length >= 16) return s.substring(0, 16).replaceFirst("T", " ");
+    return s;
+  }
+}
+
+/// Read-only transaction detail: every value comes straight from the server
+/// response — nothing is derived or embellished client-side.
+class _TransactionDetailSheet extends StatelessWidget {
+  const _TransactionDetailSheet({required this.transaction});
+
+  final Map transaction;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final t = transaction;
+    final type = "${t["type"] ?? "debit"}";
+    final amount = (t["amountMinor"] as num?)?.toInt() ?? 0;
+    final after = (t["balanceAfterMinor"] as num?)?.toInt();
+    final naira = amount ~/ 100;
+    final kobo = (amount % 100).toString().padLeft(2, "0");
+    final when = "${t["createdAt"]}";
+    final whenText = when.length >= 16
+        ? when.substring(0, 16).replaceFirst("T", " ")
+        : when;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(
+                type == "credit"
+                    ? Icons.arrow_downward_rounded
+                    : Icons.arrow_upward_rounded,
+                color: type == "credit"
+                    ? Colors.green.shade700
+                    : theme.colorScheme.error,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                "${type == "credit" ? "Money in" : "Money out"} — ₦$naira.$kobo",
+                style: theme.textTheme.titleLarge,
+              ),
+            ]),
+            const SizedBox(height: 16),
+            if (after != null) ...[
+              Text("Balance after: ₦${after ~/ 100}.${(after % 100).toString().padLeft(2, "0")}",
+                  style: theme.textTheme.bodyMedium),
+              const SizedBox(height: 6),
+            ],
+            Text("Reference: ${t["reference"] ?? "—"}",
+                style: theme.textTheme.bodySmall),
+            const SizedBox(height: 4),
+            Text("Date: $whenText", style: theme.textTheme.bodySmall),
+            const SizedBox(height: 4),
+            Text(
+              "Confirmed by the OPPA server",
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }
 
@@ -225,16 +340,26 @@ class _BalanceCard extends StatelessWidget {
               const SizedBox(height: 8),
               FilledButton(onPressed: onRetry, child: const Text("Retry")),
             ]),
-          ViewReady<Map>(:final data) => Column(
+          ViewReady<Map>(:final data, :final fromCache) => Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text("Available balance",
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
+                Text(
+                  // Honest labelling: a cached balance is last-known, never
+                  // presented as the server's current truth (§13/§16).
+                  fromCache ? "Last known balance (offline)" : "Available balance",
+                  style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+                ),
                 const SizedBox(height: 4),
-                Text("₦ ${_formatMinor((data["balanceMinor"] as num?)?.toInt() ?? 0)}",
+                Text("₦ ${_BalanceCard.formatMinor((data["balanceMinor"] as num?)?.toInt() ?? 0)}",
                     style: theme.textTheme.headlineMedium
                         ?.copyWith(fontWeight: FontWeight.w700)),
+                if (fromCache) ...[
+                  const SizedBox(height: 4),
+                  Text("Will update when you reconnect",
+                      style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurface.withValues(alpha: 0.5))),
+                ],
               ],
             ),
           _ => const SizedBox.shrink(),
@@ -243,7 +368,8 @@ class _BalanceCard extends StatelessWidget {
     );
   }
 
-  static String _formatMinor(int minor) {
+  /// Naira/kobo formatting from server minor units — single source of truth.
+  static String formatMinor(int minor) {
     final naira = minor ~/ 100;
     final kobo = minor % 100;
     return "$naira.${kobo.toString().padLeft(2, "0")}";

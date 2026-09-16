@@ -91,7 +91,8 @@ void main() {
     await tester.tap(find.byIcon(Icons.call_outlined));
     await tester.pump();
     await tester.pump(const Duration(seconds: 2)); // let the answer future settle
-    expect(find.text("Connected"), findsOneWidget);
+    // Honest answer state: lifecycle is real, media is not claimed as live.
+    expect(find.textContaining("audio media coming"), findsOneWidget);
     expect(find.text("End"), findsOneWidget);
 
     await tester.tap(find.byIcon(Icons.call_end_outlined));

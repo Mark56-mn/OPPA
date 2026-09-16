@@ -98,7 +98,9 @@ class _CallScreenState extends State<CallScreen> {
       } else if (type == "answer") {
         setState(() {
           _phase = CallPhase.active;
-          _status = "Connected";
+          // Honest: signaling/lifecycle is real, but this build has no WebRTC
+          // media stack — never claim a live audio connection.
+          _status = "Call answered — audio media coming in a later release";
         });
       } else if (type == "busy") {
         await _finish("Busy");
@@ -130,7 +132,7 @@ class _CallScreenState extends State<CallScreen> {
     if (r.isSuccess) {
       setState(() {
         _phase = CallPhase.active;
-        _status = "Connected";
+        _status = "Call answered — audio media coming in a later release";
       });
     } else {
       await _finish(_errorCodeText(r.errorCode, "Could not answer"));
@@ -186,7 +188,7 @@ class _CallScreenState extends State<CallScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              widget.kind == "video" ? "Video call" : "Voice call",
+              widget.kind == "video" ? "Video call (video arriving later)" : "Voice call",
               style: theme.textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
@@ -195,7 +197,9 @@ class _CallScreenState extends State<CallScreen> {
               Padding(
                 padding: const EdgeInsets.all(12),
                 child: Text(
-                  "Media quality adapts automatically on weak networks.\nToggle to audio-only if video stutters.",
+                  "Ring, answer, decline and hang-up are real and server-confirmed.\n"
+                  "Peer-to-peer audio/video media is not enabled in this version — "
+                  "no audio is transmitted yet.",
                   textAlign: TextAlign.center,
                   style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
