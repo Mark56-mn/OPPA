@@ -148,11 +148,6 @@ class _WalletScreenState extends State<WalletScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text("Wallet")),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _transfer,
-        icon: const Icon(Icons.send_outlined),
-        label: const Text("Send"),
-      ),
       body: RefreshIndicator(
         onRefresh: _load,
         child: ListView(
@@ -160,12 +155,32 @@ class _WalletScreenState extends State<WalletScreen> {
           children: [
             _BalanceCard(state: _overview, onRetry: _load),
             const SizedBox(height: 12),
+            // Approved wallet art: Deposit · Send · Request. Deposit and Send
+            // are the real money paths; Request has no backend endpoint in V1,
+            // so it explains that instead of pretending.
             Row(children: [
               Expanded(
                 child: FilledButton.tonalIcon(
                   onPressed: _addMoney,
                   icon: const Icon(Icons.add_card),
-                  label: const Text("Add money"),
+                  label: const Text("Deposit"),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FilledButton.tonalIcon(
+                  onPressed: _transfer,
+                  icon: const Icon(Icons.send_outlined),
+                  label: const Text("Send"),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () => showLockedFeatureSheet(
+                      context, OppaFeature.requestMoney),
+                  icon: const Icon(Icons.request_page_outlined),
+                  label: const Text("Request"),
                 ),
               ),
             ]),

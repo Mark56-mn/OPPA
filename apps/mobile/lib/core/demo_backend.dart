@@ -77,6 +77,10 @@ class DemoBackend implements ApiClientBase {
     if (path.startsWith("/profile")) return _getProfile(path);
     if (path == "/contacts") return _ok({"contacts": _contactsJson()});
     if (path == "/conversations") return _ok({"conversations": _conversationsJson()});
+    // Must be matched before the plain /messages route (same suffix family).
+    if (path.contains("/messages/") && path.endsWith("/receipts")) {
+      return _ok({"receipts": _receiptsJson(path)});
+    }
     if (path.startsWith("/conversations/") && path.endsWith("/messages")) {
       return _ok({"messages": _historyJson(_conversationId(path, "/messages"))});
     }
@@ -102,7 +106,13 @@ class DemoBackend implements ApiClientBase {
     if (path == "/payments/history") {
       return _ok({"payments": _paymentHistoryJson()});
     }
-    if (path.startsWith("/business/")) return _getBusiness(path);
+    // NOTE: the bare "/business" path must be routed too. Matching only
+    // "/business/" sent GET /business (the switcher's list) and POST /business
+    // (create) to NOT_FOUND, which is exactly why the Business workspace looked
+    // broken and "creating a business" did nothing.
+    if (path == "/business" || path.startsWith("/business/")) {
+      return _getBusiness(path, query ?? const {});
+    }
     return _err("NOT_FOUND", 404);
   }
 
@@ -137,8 +147,14 @@ class DemoBackend implements ApiClientBase {
           "demo": true,
         });
       case "/profile/oppa-id":
-        final id = "${map["oppaId"] ?? ""}";
-        if (id == "admin" || id == "oppa") return _err("OPPA_ID_RESERVED", 409);
+        final raw = "${map["oppaId"] ?? ""}";
+        final id = raw.trim().toLowerCase();
+        // Same shape/reserved/taken rules as the real server
+        // (postgres-profile-repository.validateOppaId) so onboarding exercises
+        // the production failure paths, including the claimed-in-a-race case.
+        if (!_oppaIdShape.hasMatch(id)) return _err("OPPA_ID_INVALID", 400);
+        if (_reservedOppaIds.contains(id)) return _err("OPPA_ID_RESERVED", 409);
+        if (_oppaIdTakenBy(id, exceptMe: true)) return _err("OPPA_ID_TAKEN", 409);
         _myOppaId = id;
         return _ok({"oppaId": id});
       case "/contacts":
@@ -267,7 +283,9 @@ class DemoBackend implements ApiClientBase {
     if (path == "/wallet/transfer") {
       return _walletTransfer(map);
     }
-    if (path.startsWith("/business/")) return _postBusiness(path, map);
+    if (path == "/business" || path.startsWith("/business/")) {
+      return _postBusiness(path, map);
+    }
     return _err("NOT_FOUND", 404);
   }
 
@@ -288,16 +306,71 @@ class DemoBackend implements ApiClientBase {
         return _err("BUSINESS_ROLE_INVALID", 400);
       }
       final userId = path.split("/").last;
+      final businessId = path.split("/")[2];
       for (final member in _staff) {
-        if (member["userId"] == userId) {
+        if (member["userId"] == userId && member["businessId"] == businessId) {
           if (member["role"] == "owner") {
             return _err("BUSINESS_ROLE_IMMUTABLE", 409);
           }
           member["role"] = role;
-          return _ok(member);
+          return _ok(Map<String, dynamic>.from(member));
         }
       }
       return _err("STAFF_NOT_FOUND", 404);
+    }
+
+    // /business/:businessId/products/:productId — owner/manager edit.
+    final productEdit = RegExp(r'^/business/([^/]+)/products/([^/]+)$')
+        .firstMatch(path);
+    if (productEdit != null) {
+      final businessId = productEdit.group(1)!;
+      final productId = productEdit.group(2)!;
+      if (_roleIn(businessId) != "owner" && _roleIn(businessId) != "manager") {
+        return _err("BUSINESS_PERMISSION_DENIED", 403);
+      }
+      final i = _products.indexWhere(
+          (p) => p["id"] == productId && p["businessId"] == businessId);
+      if (i < 0) return _err("BUSINESS_PRODUCT_NOT_FOUND", 404);
+      final product = _products[i];
+      if (map.containsKey("name")) {
+        final name = "${map["name"] ?? ""}".trim();
+        if (name.isEmpty || name.length > 120) {
+          return _err("BUSINESS_PRODUCT_NAME_INVALID", 400);
+        }
+        product["name"] = name;
+      }
+      if (map.containsKey("description")) product["description"] = map["description"];
+      if (map.containsKey("priceMinor")) {
+        final price = (map["priceMinor"] as num?)?.toInt() ?? 0;
+        if (price <= 0) return _err("BUSINESS_PRODUCT_PRICE_INVALID", 400);
+        product["priceMinor"] = price;
+      }
+      if (map.containsKey("status")) {
+        final status = "${map["status"] ?? ""}";
+        if (status != "active" && status != "archived") {
+          return _err("BUSINESS_PRODUCT_STATUS_INVALID", 400);
+        }
+        product["status"] = status;
+      }
+      return _ok(Map<String, dynamic>.from(product));
+    }
+
+    // /business/:businessId — owner-only profile edit.
+    final businessEdit = RegExp(r'^/business/([^/]+)$').firstMatch(path);
+    if (businessEdit != null) {
+      final businessId = businessEdit.group(1)!;
+      final found = _businessById(businessId);
+      if (found == null) return _err("BUSINESS_NOT_FOUND", 404);
+      if (_roleIn(businessId) != "owner") {
+        return _err("BUSINESS_PERMISSION_DENIED", 403);
+      }
+      if (map.containsKey("name")) {
+        final name = "${map["name"] ?? ""}".trim();
+        if (name.isEmpty || name.length > 120) return _err("BUSINESS_NAME_INVALID", 400);
+        found["name"] = name;
+      }
+      if (map.containsKey("description")) found["description"] = map["description"];
+      return _ok(Map<String, dynamic>.from(found));
     }
     return _err("NOT_FOUND", 404);
   }
@@ -338,8 +411,15 @@ class DemoBackend implements ApiClientBase {
       });
     }
     if (path.startsWith("/profile/oppa-id/available/")) {
-      final id = path.substring("/profile/oppa-id/available/".length);
-      return _ok({"available": !_blockedIds.contains(id)});
+      final raw = path.substring("/profile/oppa-id/available/".length);
+      if (!_oppaIdShape.hasMatch(raw)) {
+        return _ok({"available": false, "reason": "OPPA_ID_INVALID"});
+      }
+      final taken = _reservedOppaIds.contains(raw) || _oppaIdTakenBy(raw);
+      return _ok({
+        "available": !taken,
+        "reason": taken ? "OPPA_ID_TAKEN" : null,
+      });
     }
     if (path.startsWith("/profile/oppa-id/lookup/")) {
       final id = path.substring("/profile/oppa-id/lookup/".length);
@@ -408,6 +488,29 @@ class DemoBackend implements ApiClientBase {
     return _amara;
   }
 
+  /// Server shape rules, mirrored so the demo onboarding cannot accept a
+  /// handle the real API would reject: 3–32 chars, [a-z0-9_], leading letter.
+  static final _oppaIdShape = RegExp(r'^[a-z][a-z0-9_]{2,31}$');
+
+  /// Reserved product/system terms (subset of the server's list — enough to
+  /// exercise the OPPA_ID_RESERVED path honestly in the demo).
+  static const _reservedOppaIds = <String>{
+    'oppa', 'admin', 'administrator', 'root', 'system', 'support', 'help',
+    'security', 'wallet', 'payments', 'paystack', 'flutterwave', 'business',
+    'official', 'team', 'staff', 'moderator', 'mod', 'abuse', 'fraud',
+    'whatsapp', 'meta',
+  };
+
+  /// True when another OPPA account already holds [id] (demo members own the
+  /// handles shown in Connect, so the taken path is real, not simulated).
+  bool _oppaIdTakenBy(String id, {bool exceptMe = false}) {
+    for (final p in _people) {
+      if (p.oppaId == id) return true;
+    }
+    if (exceptMe) return false;
+    return _myOppaId.isNotEmpty && _myOppaId == id;
+  }
+
   _DemoPerson? _personByOppaId(String oppaId) {
     for (final p in _people) {
       if (p.oppaId == oppaId) return p;
@@ -459,6 +562,48 @@ class DemoBackend implements ApiClientBase {
     final readCutoff = sentAt.add(const Duration(seconds: 3));
     return _readMessageIds.contains(m.id) ||
         DateTime.now().isAfter(readCutoff);
+  }
+
+  /// Receipts for one message, derived from the same deterministic rule the
+  /// bubbles use (`_otherRead`): a real per-recipient delivered/read state, not
+  /// a client-side assumption. Mirrors GET /messages/:id/receipts.
+  List<Map<String, dynamic>> _receiptsJson(String path) {
+    final match = RegExp(
+            r'^/conversations/([^/]+)/messages/([^/]+)/receipts$')
+        .firstMatch(path);
+    if (match == null) return const [];
+    final conversationId = match.group(1)!;
+    final messageId = match.group(2)!;
+    final sent = _sentMessages.where((m) => m.id == messageId).toList();
+    final seededAt = _seedSentAt(conversationId, messageId);
+    // Unknown message id: no receipt rows at all (the real server has none to
+    // return). Inventing a recipient here would fabricate a receipt state.
+    if (sent.isEmpty && seededAt == null) return const [];
+    final sentAt = sent.isNotEmpty
+        ? DateTime.parse(sent.first.createdAt)
+        : DateTime.parse(seededAt!);
+    final read = _readMessageIds.contains(messageId) ||
+        DateTime.now().isAfter(sentAt.add(const Duration(seconds: 3)));
+    final recipients =
+        _people.where((p) => p.id != me.id).take(1).toList();
+    return [
+      for (final p in recipients)
+        {
+          "userId": p.id,
+          "deliveredAt": sentAt.add(const Duration(seconds: 1)).toIso8601String(),
+          "readAt": read
+              ? sentAt.add(const Duration(seconds: 3)).toIso8601String()
+              : null,
+        },
+    ];
+  }
+
+  /// Created-at of a seeded message, or null when the id is not one of ours.
+  String? _seedSentAt(String conversationId, String messageId) {
+    for (final m in _seedMessages(conversationId)) {
+      if (m["id"] == messageId) return "${m["createdAt"]}";
+    }
+    return null;
   }
 
   List<Map<String, dynamic>> _seedMessages(String conversationId) {
@@ -521,65 +666,165 @@ class DemoBackend implements ApiClientBase {
       ];
 
   // ------------------------------------------------------------ business
+  /// Seed business. Created businesses are appended to [_businesses] and are
+  /// real for the rest of the session: they appear in the switcher, own their
+  /// products/orders/staff, and survive navigation. (Before this, creation
+  /// returned an id that GET /business never listed and every screen silently
+  /// fell back to the seed store — "creating a business" only looked like it
+  /// worked.)
+  static const _seedBusinessId = "biz-demo-spices";
   static const _demoBusiness = <String, dynamic>{
-    "id": "biz-demo-spices",
+    "id": _seedBusinessId,
     "name": "Kano Spices Demo",
     "description": "Demo store for UI testing — no real orders or money",
+    "status": "active",
     "role": "owner",
   };
 
-  Future<ApiResponse> _getBusiness(String path) async {
+  final List<Map<String, dynamic>> _businesses = [
+    Map<String, dynamic>.from(_demoBusiness),
+  ];
+
+  Map<String, dynamic>? _businessById(String id) {
+    for (final b in _businesses) {
+      if (b["id"] == id) return b;
+    }
+    return null;
+  }
+
+  /// Role of the signed-in demo user in [businessId] (the demo user owns every
+  /// business it creates, exactly like the real owner row).
+  String? _roleIn(String businessId) =>
+      _businessById(businessId) == null ? null : "owner";
+
+  Future<ApiResponse> _getBusiness(String path,
+      [Map<String, String> query = const {}]) async {
     if (path == "/business") {
-      return _ok({"businesses": [_demoBusiness]});
+      return _ok({
+        "businesses": _businesses
+            .map((b) => Map<String, dynamic>.from(b))
+            .toList(),
+      });
     }
     if (path == "/business/orders/mine") {
       return _ok({"orders": List<Map<String, dynamic>>.from(_myOrders)});
     }
-    if (path.startsWith("/business/") && path.endsWith("/products")) {
-      return _ok({"products": List<Map<String, dynamic>>.from(_products)});
+
+    // /business/:id — a single business the caller is staff of.
+    final single = RegExp(r'^/business/([^/]+)$').firstMatch(path);
+    if (single != null) {
+      final found = _businessById(single.group(1)!);
+      if (found == null) return _err("BUSINESS_NOT_FOUND", 404);
+      return _ok(Map<String, dynamic>.from(found));
     }
-    if (path.startsWith("/business/") && path.endsWith("/orders")) {
-      return _ok({"orders": List<Map<String, dynamic>>.from(_orders)});
-    }
-    if (path.startsWith("/business/") && path.endsWith("/analytics")) {
+
+    final products = RegExp(r'^/business/([^/]+)/products$').firstMatch(path);
+    if (products != null) {
+      final id = products.group(1)!;
+      if (_businessById(id) == null) return _err("BUSINESS_NOT_FOUND", 404);
+      // includeArchived is staff-only on the real server (the route checks the
+      // caller's role); here the caller is always the owner of the store.
+      final includeArchived = query["includeArchived"] == "1";
       return _ok({
-        "ordersTotal": _orders.length,
-        "ordersPaid": _orders.where((o) => "${o["status"]}" == "paid" || "${o["status"]}" == "fulfilled").length,
-        "revenueMinor": _orders
-            .where((o) => "${o["status"]}" == "paid" || "${o["status"]}" == "fulfilled")
-            .fold<int>(0, (sum, o) => sum + ((o["amountMinor"] as num?)?.toInt() ?? 0)),
+        "products": _products
+            .where((p) =>
+                p["businessId"] == id &&
+                (includeArchived || "${p["status"]}" == "active"))
+            .map((p) => Map<String, dynamic>.from(p))
+            .toList(),
       });
     }
-    if (path.startsWith("/business/") && path.endsWith("/staff")) {
-      return _ok({"staff": List<Map<String, dynamic>>.from(_staff)});
+
+    final orders = RegExp(r'^/business/([^/]+)/orders$').firstMatch(path);
+    if (orders != null) {
+      final id = orders.group(1)!;
+      if (_businessById(id) == null) return _err("BUSINESS_NOT_FOUND", 404);
+      final mine = _orders.where((o) => o["businessId"] == id).toList();
+      return _ok({"orders": mine.map((o) => Map<String, dynamic>.from(o)).toList()});
+    }
+
+    final analytics = RegExp(r'^/business/([^/]+)/analytics$').firstMatch(path);
+    if (analytics != null) {
+      final id = analytics.group(1)!;
+      if (_businessById(id) == null) return _err("BUSINESS_NOT_FOUND", 404);
+      final mine = _orders.where((o) => o["businessId"] == id).toList();
+      final counted = mine.where((o) {
+        final s = "${o["status"]}";
+        return s == "paid" || s == "fulfilled";
+      });
+      return _ok({
+        "ordersTotal": mine.length,
+        "ordersPaid": counted.length,
+        "revenueMinor": counted.fold<int>(
+            0, (sum, o) => sum + ((o["amountMinor"] as num?)?.toInt() ?? 0)),
+      });
+    }
+
+    final staff = RegExp(r'^/business/([^/]+)/staff$').firstMatch(path);
+    if (staff != null) {
+      final id = staff.group(1)!;
+      if (_businessById(id) == null) return _err("BUSINESS_NOT_FOUND", 404);
+      return _ok({
+        "staff": _staff
+            .where((m) => m["businessId"] == id)
+            .map((m) => Map<String, dynamic>.from(m))
+            .toList(),
+      });
     }
     return _err("NOT_FOUND", 404);
   }
 
   Future<ApiResponse> _postBusiness(String path, Map<String, dynamic> map) async {
     if (path == "/business") {
-      return _ok({
+      final name = "${map["name"] ?? ""}".trim();
+      // Same validation as the real route: a blank or oversized name is a
+      // client bug and must not create a store.
+      if (name.isEmpty || name.length > 120) {
+        return _err("BUSINESS_NAME_INVALID", 400);
+      }
+      final created = <String, dynamic>{
         "id": "biz-${_epoch.millisecondsSinceEpoch}",
-        "name": "${map["name"] ?? "Demo Store"}",
+        "name": name,
+        "description": map["description"],
+        "status": "active",
         "role": "owner",
+      };
+      _businesses.add(created);
+      // Owner staff row, exactly like createBusiness() does in Postgres.
+      _staff.add({
+        "businessId": created["id"],
+        "userId": me.id,
+        "displayName": _myDisplayName,
+        "role": "owner",
+        "phoneMasked": null,
       });
+      return _ok(Map<String, dynamic>.from(created));
     }
     if (path.startsWith("/business/") && path.endsWith("/products")) {
-      final businessId = path.substring("/business/".length, path.length - "/products".length);
-      final product = {
+      final businessId =
+          path.substring("/business/".length, path.length - "/products".length);
+      if (_businessById(businessId) == null) {
+        return _err("BUSINESS_NOT_FOUND", 404);
+      }
+      final price = (map["priceMinor"] as num?)?.toInt() ?? 0;
+      final productName = "${map["name"] ?? ""}".trim();
+      if (productName.isEmpty) return _err("BUSINESS_PRODUCT_NAME_INVALID", 400);
+      if (price <= 0) return _err("BUSINESS_PRODUCT_PRICE_INVALID", 400);
+      final product = <String, dynamic>{
         "id": "prod-${_epoch.microsecondsSinceEpoch}",
         "businessId": businessId,
-        "name": "${map["name"] ?? "Product"}",
-        "priceMinor": (map["priceMinor"] as num?)?.toInt() ?? 0,
+        "name": productName,
+        "priceMinor": price,
+        "currency": "NGN",
         "description": map["description"],
         "status": "active",
       };
       _products.insert(0, product);
-      return _ok(product);
+      return _ok(Map<String, dynamic>.from(product));
     }
     if (path.startsWith("/business/") && path.endsWith("/orders")) {
       final businessId = path.substring("/business/".length, path.length - "/orders".length);
-      if (businessId == _demoBusiness["id"]) {
+      if (businessId == _seedBusinessId) {
         // Self-ordering blocker mirrors the real server rule.
         return _err("BUSINESS_ORDER_SELF_INVALID", 403);
       }
@@ -650,13 +895,22 @@ class DemoBackend implements ApiClientBase {
       return _ok(order);
     }
 
-    if (path.startsWith("/business/") && path.endsWith("/staff")) {
+    final staffAdd =
+        RegExp(r'^/business/([^/]+)/staff$').firstMatch(path);
+    if (staffAdd != null) {
+      final businessId = staffAdd.group(1)!;
+      if (_businessById(businessId) == null) return _err("BUSINESS_NOT_FOUND", 404);
       final userId = "${map["userId"] ?? ""}";
-      if (userId.isEmpty) return _err("STAFF_USER_REQUIRED", 400);
+      if (userId.isEmpty) return _err("USER_ID_REQUIRED", 400);
+      final role = "${map["role"] ?? ""}";
+      if (role != "manager" && role != "staff") {
+        return _err("BUSINESS_ROLE_INVALID", 400);
+      }
       _staff.add({
+        "businessId": businessId,
         "userId": userId,
         "displayName": "Staff member",
-        "role": "${map["role"] ?? "staff"}",
+        "role": role,
         "phoneMasked": null,
       });
       return _ok({"ok": true});
@@ -664,6 +918,9 @@ class DemoBackend implements ApiClientBase {
     return _err("NOT_FOUND", 404);
   }
 
+  /// Products belong to a business — the seed rows carry the seed id so a
+  /// newly created store starts genuinely empty (it does not inherit another
+  /// store's catalogue).
   final List<Map<String, dynamic>> _products = [
     {"id": "prod-suya-mix", "businessId": "biz-demo-spices", "name": "Suya Spice Mix 200g", "priceMinor": 150000, "description": "Demo product", "status": "active"},
     {"id": "prod-yaji", "businessId": "biz-demo-spices", "name": "Yaji Pepper 100g", "priceMinor": 80000, "description": "Demo product", "status": "active"},
@@ -677,10 +934,12 @@ class DemoBackend implements ApiClientBase {
     {"id": "order-demo-cancelled-1", "businessId": "biz-demo-spices", "amountMinor": 60000, "status": "cancelled", "customerUserId": "demo-user-tunde", "customerOrderReference": "demo-ref-099", "metadata": {"items": [{"name": "Old Groundnut Blend", "quantity": 1}]}, "createdAt": "2026-01-12T10:00:00Z"},
   ];
 
+  /// Staff rows are scoped to a business (the real roster joins on
+  /// business_id), so a new store starts with only its own owner row.
   final List<Map<String, dynamic>> _staff = [
-    {"userId": "demo-user-me", "displayName": "Demo User (owner)", "role": "owner", "phoneMasked": "+234 801 *** 0000"},
-    {"userId": "demo-user-amara", "displayName": "Amara Okafor", "role": "manager", "phoneMasked": "+234 802 *** 2222"},
-    {"userId": "demo-user-tunde", "displayName": "Tunde Bakare", "role": "staff", "phoneMasked": "+234 803 *** 4444"},
+    {"businessId": _seedBusinessId, "userId": "demo-user-me", "displayName": "Demo User (owner)", "role": "owner", "phoneMasked": "+234 801 *** 0000"},
+    {"businessId": _seedBusinessId, "userId": "demo-user-amara", "displayName": "Amara Okafor", "role": "manager", "phoneMasked": "+234 802 *** 2222"},
+    {"businessId": _seedBusinessId, "userId": "demo-user-tunde", "displayName": "Tunde Bakare", "role": "staff", "phoneMasked": "+234 803 *** 4444"},
   ];
 
   // --------------------------------------------------------------- calls

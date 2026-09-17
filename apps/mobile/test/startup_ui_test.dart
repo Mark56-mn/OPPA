@@ -177,12 +177,57 @@ void main() {
 
       // 3. Profile step appears (voice name entry screen, approved header).
       expect(find.text("Create your profile"), findsOneWidget);
-      // 4. No name spoken → the button offers Skip; both paths reach the
-      // You're-all-set confirmation, then Home.
+      // Speak-or-type: the reference offers both entry modes.
+      expect(find.text("Speak"), findsOneWidget);
+      expect(find.text("Type"), findsOneWidget);
+      // 4. No name spoken → the button offers Skip.
       await tester.ensureVisible(find.text("Skip — add it later"));
       await tester.pumpAndSettle();
       await tester.tap(find.text("Skip — add it later"));
       await tester.pumpAndSettle();
+
+      // 5. Profile picture step: rendered like the reference, but photo upload
+      //    is honestly not part of V1 — no fake avatarUrl is written.
+      expect(find.text("Add a profile picture"), findsOneWidget);
+      expect(find.text("Camera"), findsOneWidget);
+      expect(find.text("Gallery"), findsOneWidget);
+      await tester.ensureVisible(find.text("Continue"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Continue"));
+      await tester.pumpAndSettle();
+
+      // 6. Choose your OPPA ID — real availability against the API.
+      expect(find.text("Choose your OPPA ID"), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(find.text("Available suggestions"), findsOneWidget);
+      // The suggestions came back available from the injected backend, so the
+      // primary action is enabled and claims the handle for real.
+      await tester.ensureVisible(find.text("Continue"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Continue"));
+      await tester.pumpAndSettle();
+
+      // 7. Choose Your OPPA Look — all three approved looks, live.
+      // (Header + picker title share the approved wording.)
+      expect(find.text("Choose Your OPPA Look"), findsWidgets);
+      expect(find.text("Fluid Africa"), findsOneWidget);
+      expect(find.text("OPPA Pulse"), findsOneWidget);
+      expect(find.text("Everyday OPPA"), findsOneWidget);
+      await tester.ensureVisible(find.text("Continue"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Continue"));
+      await tester.pumpAndSettle();
+
+      // 8. Security step states only what is actually true.
+      expect(find.text("Set up security"), findsOneWidget);
+      expect(find.text("This device is registered"), findsOneWidget);
+      expect(find.text("App lock PIN"), findsOneWidget);
+      await tester.ensureVisible(find.text("Continue"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Continue"));
+      await tester.pumpAndSettle();
+
+      // 9. Completion, then the personal shell.
       expect(find.text("You're all set!"), findsOneWidget);
       await tester.ensureVisible(find.text("Start OPPA"));
       await tester.tap(find.text("Start OPPA"), warnIfMissed: false);
@@ -190,6 +235,37 @@ void main() {
 
       expect(find.widgetWithText(Tab, "Chats"), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
+    },
+  );
+
+  testWidgets(
+    "onboarding OPPA ID step blocks Continue when the name is already taken",
+    (tester) async {
+      // The server — not the client — decides availability. This drives the
+      // demo backend's real taken-id path so a taken handle can never be
+      // claimed by tapping Continue.
+      await _pumpApp(tester, demoTransport: true);
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.widgetWithText(TextField, "Phone number"), "+2348012345678");
+      await tester.tap(find.text("Continue"));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.widgetWithText(TextField, "6-digit code"), "000000");
+      await tester.tap(find.text("Verify"));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text("Skip — add it later"));
+      await tester.tap(find.text("Skip — add it later"));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text("Continue"));
+      await tester.tap(find.text("Continue"));
+      await tester.pumpAndSettle();
+
+      // "amara_01" is held by a demo member — the server says taken.
+      await tester.enterText(find.byType(TextField).last, "amara_01");
+      await tester.pumpAndSettle(const Duration(milliseconds: 700));
+      expect(find.text("That name is taken"), findsOneWidget);
+      expect(find.byIcon(Icons.cancel), findsWidgets);
     },
   );
 }

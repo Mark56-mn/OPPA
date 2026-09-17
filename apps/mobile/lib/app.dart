@@ -53,12 +53,17 @@ class _OppaAppState extends State<OppaApp> {
   late final CallsRepository calls;
   late final NotificationsRepository notifications;
   late final BusinessRepository business;
-  OppaThemeId themeId = OppaThemeId.fluidAfrica;
+  /// Restored from durable preferences in [initState]; a State field
+  /// initializer cannot read `widget`, and the stored look must be live
+  /// before the first frame so the app never flashes the wrong theme.
+  late OppaThemeId themeId;
   StreamSubscription<ConnectState>? _connectivitySub;
 
   @override
   void initState() {
     super.initState();
+    themeId = ThemePreference.decode(
+        widget.prefs?.getString(ThemePreference.storageKey));
     // The platform FlutterSecureStorage. Passing it explicitly is REQUIRED:
     // a null store makes every SecureTokenStore call throw StateError, which
     // used to leave bootstrap() stuck in AuthPhase.unknown forever — the first
@@ -114,7 +119,17 @@ class _OppaAppState extends State<OppaApp> {
   /// button). Safe to call repeatedly: concurrent callers share one bootstrap.
   void _retryBootstrap() => session.bootstrap();
 
-  void _setTheme(OppaThemeId id) => setState(() => themeId = id);
+  /// Theme = presentation only. Switching it must never touch identity,
+  /// chats, wallet, security or business data — and the choice is persisted
+  /// so it survives a restart (it used to reset to the default every launch).
+  void _setTheme(OppaThemeId id) {
+    setState(() => themeId = id);
+    final prefs = widget.prefs;
+    if (prefs != null) {
+      unawaited(prefs.setString(
+          ThemePreference.storageKey, ThemePreference.encode(id)));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -146,7 +161,7 @@ class _OppaAppState extends State<OppaApp> {
         session.phase == AuthPhase.authenticated && session.awaitingProfileName;
     final app = MaterialApp(
       title: "OPPA",
-      theme: buildOppaTheme(oppaTokens[themeId]!, brightness: Brightness.dark),
+      theme: buildOppaTheme(oppaTokens[themeId]!),
       builder: (context, child) {
         if (!DemoMode.enabled) return child ?? const SizedBox.shrink();
         return Directionality(

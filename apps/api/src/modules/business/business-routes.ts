@@ -73,10 +73,76 @@ export function createBusinessRouter(businesses: PostgresBusinessRepository) {
     } catch (e) { next(e); }
   });
 
+  // Product list. includeArchived=1 is honoured only for staff of the
+  // business, so customers never see archived rows.
   router.get("/:businessId/products", async (req, res, next) => {
     try {
       const businessId = String(req.params.businessId);
-      res.json({ products: await businesses.listProducts(businessId) });
+      let includeArchived = false;
+      if (req.query.includeArchived === "1") {
+        includeArchived = (await businesses.roleOf(businessId, req.auth!.userId)) !== null;
+      }
+      res.json({ products: await businesses.listProducts(businessId, { includeArchived }) });
+    } catch (e) { next(e); }
+  });
+
+  // Edit an existing product (owner/manager). Price, name, description and
+  // the active/archived state are all validated in the repository.
+  router.patch("/:businessId/products/:productId", requireJsonBody, async (req, res, next) => {
+    try {
+      const businessId = String(req.params.businessId);
+      const productId = String(req.params.productId);
+      const body = req.body ?? {};
+      const patch: { name?: string; description?: string | null; priceMinor?: number; status?: "active" | "archived" } = {};
+      if (body.name !== undefined) {
+        if (typeof body.name !== "string") throw new Error("BUSINESS_PRODUCT_NAME_INVALID");
+        patch.name = body.name;
+      }
+      if (body.description !== undefined) {
+        if (body.description !== null && typeof body.description !== "string") {
+          throw new Error("BUSINESS_DESCRIPTION_INVALID");
+        }
+        patch.description = body.description;
+      }
+      if (body.priceMinor !== undefined) {
+        if (!Number.isSafeInteger(body.priceMinor)) throw new Error("BUSINESS_PRODUCT_PRICE_INVALID");
+        patch.priceMinor = body.priceMinor;
+      }
+      if (body.status !== undefined) {
+        if (body.status !== "active" && body.status !== "archived") {
+          throw new Error("BUSINESS_PRODUCT_STATUS_INVALID");
+        }
+        patch.status = body.status;
+      }
+      if (Object.keys(patch).length === 0) {
+        res.status(400).json({ error: "BUSINESS_PRODUCT_PATCH_EMPTY", requestId: res.locals.requestId });
+        return;
+      }
+      res.json(await businesses.updateProduct(businessId, req.auth!.userId, productId, patch));
+    } catch (e) { next(e); }
+  });
+
+  // Business profile edit (owner only).
+  router.patch("/:businessId", requireJsonBody, async (req, res, next) => {
+    try {
+      const businessId = String(req.params.businessId);
+      const body = req.body ?? {};
+      const patch: { name?: string; description?: string | null } = {};
+      if (body.name !== undefined) {
+        if (typeof body.name !== "string") throw new Error("BUSINESS_NAME_INVALID");
+        patch.name = body.name;
+      }
+      if (body.description !== undefined) {
+        if (body.description !== null && typeof body.description !== "string") {
+          throw new Error("BUSINESS_DESCRIPTION_INVALID");
+        }
+        patch.description = body.description;
+      }
+      if (Object.keys(patch).length === 0) {
+        res.status(400).json({ error: "BUSINESS_PATCH_EMPTY", requestId: res.locals.requestId });
+        return;
+      }
+      res.json(await businesses.updateBusiness(businessId, req.auth!.userId, patch));
     } catch (e) { next(e); }
   });
 

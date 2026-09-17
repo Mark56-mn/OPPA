@@ -15,10 +15,15 @@ class TranslatorScreen extends StatefulWidget {
   const TranslatorScreen({
     super.key,
     required this.messages,
+    this.conversations,
     this.initialText,
   });
 
   final MessagesRepository messages;
+
+  /// Real conversation list powering the "send to chat" picker. Optional: when
+  /// absent the screen says so rather than pretending to have destinations.
+  final ConversationsRepository? conversations;
   final String? initialText;
 
   @override
@@ -164,33 +169,69 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
             : (response?.errorCode ?? "Could not send — check your connection"))));
   }
 
-  Future<String?> _promptConversationId() {
-    final controller = TextEditingController();
-    return showDialog<String>(
+  /// Real destination picker: the user's actual conversations from the server,
+  /// chosen by name. A raw conversation-id text box is not something an OPPA
+  /// user should ever have to see.
+  Future<String?> _promptConversationId() async {
+    final repo = widget.conversations;
+    if (repo == null) {
+      _snack("Chats are unavailable in this workspace — nothing was sent");
+      return null;
+    }
+    final r = await repo.list();
+    if (!mounted) return null;
+    final all = (((r.body is Map ? (r.body as Map)["conversations"] : null)
+                as List?) ??
+            const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+    if (!r.isSuccess) {
+      _snack(r.errorCode ?? "Could not load your chats");
+      return null;
+    }
+    if (all.isEmpty) {
+      _snack("You have no chats yet — start one from Chats first");
+      return null;
+    }
+    return showModalBottomSheet<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Send to chat"),
-        content: TextField(
-          controller: controller,
-          maxLength: 64,
-          decoration: const InputDecoration(
-              labelText: "Conversation id",
-              helperText: "Find it under Chats"),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+              child: Text("Send to chat",
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700)),
+            ),
+            for (final c in all)
+              ListTile(
+                leading: Icon("${c["kind"] ?? ""}" == "group"
+                    ? Icons.groups_outlined
+                    : Icons.person_outline),
+                title: Text("${c["title"] ?? "Chat"}"),
+                subtitle: Text(
+                    "${c["kind"] ?? "direct"} · ${c["unreadCount"] ?? 0} unread"),
+                onTap: () => Navigator.pop(context, "${c["id"] ?? ""}"),
+              ),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Cancel")),
-          FilledButton(
-              onPressed: () {
-                final v = controller.text.trim();
-                if (v.isEmpty) return;
-                Navigator.pop(context, v);
-              },
-              child: const Text("Send")),
-        ],
       ),
     );
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override

@@ -17,10 +17,17 @@ class OppaTokens {
     required this.accent,
     required this.success,
     required this.danger,
+    this.brightness = Brightness.dark,
   });
 
   final OppaThemeId id;
   final String name;
+
+  /// Lightness of the palette itself — NOT a user preference. "Everyday OPPA"
+  /// is the approved light look, so it must be built as a light ColorScheme;
+  /// forcing a dark scheme over white surfaces produced unreadable
+  /// white-on-white text before this field existed.
+  final Brightness brightness;
   final Color seed;
   final Color primary;
   final Color onPrimary;
@@ -35,6 +42,29 @@ class OppaTokens {
 /// Token sets aligned to the approved "Choose Your OPPA Look" screens:
 /// Fluid Africa = warm amber/gold on deep brown, OPPA Pulse = brand violet
 /// on near-black, Everyday OPPA = clean green on white.
+/// Durable storage for the chosen look. The theme is presentation only, so it
+/// lives in plain preferences (never secure storage) and survives restarts —
+/// a user should not have to re-pick their look every time OPPA opens.
+class ThemePreference {
+  const ThemePreference._();
+
+  static const storageKey = "oppa.themeId";
+
+  /// Parses a stored value, falling back to the default look for unknown or
+  /// missing values (a renamed/removed look must never crash startup).
+  static OppaThemeId decode(String? stored) {
+    for (final id in OppaThemeId.values) {
+      if (id.name == stored) return id;
+    }
+    return defaultThemeId;
+  }
+
+  static String encode(OppaThemeId id) => id.name;
+
+  /// Approved default: the OPPA Pulse dark look.
+  static const defaultThemeId = OppaThemeId.pulse;
+}
+
 const oppaTokens = <OppaThemeId, OppaTokens>{
   OppaThemeId.fluidAfrica: OppaTokens(
     id: OppaThemeId.fluidAfrica,
@@ -65,6 +95,7 @@ const oppaTokens = <OppaThemeId, OppaTokens>{
   OppaThemeId.everyday: OppaTokens(
     id: OppaThemeId.everyday,
     name: "Everyday OPPA",
+    brightness: Brightness.light,
     seed: Color(0xFF16A34A),
     primary: Color(0xFF16A34A),
     onPrimary: Color(0xFFFFFFFF),
@@ -78,9 +109,11 @@ const oppaTokens = <OppaThemeId, OppaTokens>{
 };
 
 /// Builds the Material theme from tokens (single source of truth).
-ThemeData buildOppaTheme(OppaTokens t, {Brightness brightness = Brightness.dark}) {
+/// Defaults to the palette's own lightness so every call site gets a
+/// readable scheme without having to remember which look is light.
+ThemeData buildOppaTheme(OppaTokens t, {Brightness? brightness}) {
   final scheme = ColorScheme(
-    brightness: brightness,
+    brightness: brightness ?? t.brightness,
     primary: t.primary,
     onPrimary: t.onPrimary,
     secondary: t.accent,

@@ -76,6 +76,43 @@ Requires `python3 -m pip install pillow numpy`. Never hand-edit the PNGs.
 - `android/.../drawable/oppa_launch.png` — centered OPPA PULSE splash shown
   by `LaunchTheme` until Flutter draws its first frame
 
+## Onboarding (8 steps, matching the approved art)
+
+`Welcome → phone → OTP → profile (speak/type your name) → profile picture →
+Choose your OPPA ID → Choose Your OPPA Look → security → You're all set!`
+
+- **OPPA ID is real.** Three candidates are derived from the name and each is
+  checked against `GET /profile/oppa-id/available/:id`; free text is
+  debounce-checked. `Continue` stays disabled until the **server** reports the
+  handle available, and `POST /profile/oppa-id` performs the claim. A rejected
+  claim (taken in a race / reserved / rate-limited) keeps you on the step with
+  the server's reason — the client never decides availability.
+- **Profile picture is honestly locked.** There is no media-upload endpoint in
+  V1, so Camera/Gallery explain that instead of writing a fake `avatarUrl`.
+- **Security step** reports only what is true (this device really is enrolled
+  by OTP verify); app-lock PIN, biometrics and 2FA are marked as not shipped.
+
+## Themes (three approved looks)
+
+`OppaThemeId` = **OPPA Pulse** (purple, dark) · **Fluid Africa** (amber, dark) ·
+**Everyday OPPA** (green, **light**). Each token set carries its own
+`brightness`, so the light look is built as a light `ColorScheme`.
+
+The choice is persisted under `oppa.themeId` (`ThemePreference`) and restored
+before the first frame. Theme is presentation only — it never touches identity,
+chats, wallet or security.
+
+## Workspaces (one OPPA identity)
+
+Personal (Chats/Wallet/Calls/Me) and Business (Dashboard/Orders/Products/More)
+are separate surfaces behind one session — switching never logs you out. The
+Business app is a fullscreen route and always offers **Back to Personal**.
+Creating a store is a real `POST /business`; the new store owns its own
+products, orders and roster and starts empty. Merchants can add, edit, archive
+and restore products (`PATCH /business/:id/products/:productId`) and rename the
+store (`PATCH /business/:id`, owner-only). "Message customer" hands off to the
+personal Chats tab and opens the real direct conversation.
+
 ## Security model
 
 - Access/refresh tokens and the device private key live in

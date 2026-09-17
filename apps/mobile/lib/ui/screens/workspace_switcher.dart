@@ -15,6 +15,9 @@ Future<void> showWorkspaceSwitcher(
   required SessionStore session,
   required BusinessRepository business,
   required ConnectivityService connectivity,
+  void Function(String customerUserId)? onMessageCustomer,
+  MessagesRepository? messages,
+  ConversationsRepository? conversations,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -26,6 +29,9 @@ Future<void> showWorkspaceSwitcher(
       session: session,
       business: business,
       connectivity: connectivity,
+      onMessageCustomer: onMessageCustomer,
+      messages: messages,
+      conversations: conversations,
     ),
   );
 }
@@ -35,11 +41,24 @@ class _WorkspaceSwitcherSheet extends StatefulWidget {
     required this.session,
     required this.business,
     required this.connectivity,
+    this.onMessageCustomer,
+    this.messages,
+    this.conversations,
   });
 
   final SessionStore session;
   final BusinessRepository business;
   final ConnectivityService connectivity;
+
+  /// Messaging repositories power the merchant translator's "send to chat".
+  /// Optional: without them the entry is hidden rather than dead.
+  final MessagesRepository? messages;
+  final ConversationsRepository? conversations;
+
+  /// Optional hand-off into the personal Chats tab. Null when the caller has
+  /// no messaging repositories — the action is then simply not offered
+  /// (never rendered as a dead button).
+  final void Function(String customerUserId)? onMessageCustomer;
 
   void openBusiness(BuildContext context, {required String id, required String name}) {
     Navigator.of(context).pop();
@@ -52,6 +71,9 @@ class _WorkspaceSwitcherSheet extends StatefulWidget {
           connectivity: connectivity,
           initialBusinessId: id,
           initialBusinessName: name,
+          onMessageCustomer: onMessageCustomer,
+          messages: messages,
+          conversations: conversations,
         ),
       ),
     );

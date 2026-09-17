@@ -27,6 +27,7 @@ class MeScreen extends StatefulWidget {
     required this.themeId,
     required this.onThemeChanged,
     required this.onSignOut,
+    this.onMessageCustomer,
   });
 
   final SessionStore session;
@@ -37,6 +38,7 @@ class MeScreen extends StatefulWidget {
   final OppaThemeId themeId;
   final void Function(OppaThemeId) onThemeChanged;
   final Future<void> Function() onSignOut;
+  final void Function(String customerUserId)? onMessageCustomer;
 
   @override
   State<MeScreen> createState() => _MeScreenState();
@@ -143,7 +145,8 @@ class _MeScreenState extends State<MeScreen> {
     showWorkspaceSwitcher(context,
         session: widget.session,
         business: widget.business,
-        connectivity: widget.connectivity);
+        connectivity: widget.connectivity,
+        onMessageCustomer: widget.onMessageCustomer);
   }
 
   @override

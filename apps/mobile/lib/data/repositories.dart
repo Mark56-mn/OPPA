@@ -74,6 +74,12 @@ class MessagesRepository {
     return _api.get("/conversations/$conversationId/messages", query: query);
   }
 
+  /// Per-recipient delivery/read receipts for one message (server truth:
+  /// deliveredAt / readAt per member). Powers the Message Details screen — the
+  /// client never invents a receipt state.
+  Future<ApiResponse> receipts(String conversationId, String messageId) =>
+      _api.get("/conversations/$conversationId/messages/$messageId/receipts");
+
   /// Sends a message with a client idempotency key. When the network is down,
   /// the op is queued durably (survives restart) and flushed on reconnect.
   /// Returns (confirmed, response-or-null). Never fabricates success offline.
@@ -185,12 +191,40 @@ class BusinessRepository {
   Future<ApiResponse> listMine() => _api.get("/business");
   Future<ApiResponse> create({required String name, String? description}) =>
       _api.post("/business", body: {"name": name, if (description != null) "description": description});
-  Future<ApiResponse> listProducts(String businessId) =>
-      _api.get("/business/$businessId/products");
+  /// Products of a business. Staff may include archived rows (to restore
+  /// them); customers only ever receive active ones — the server decides.
+  Future<ApiResponse> listProducts(String businessId,
+          {bool includeArchived = false}) =>
+      _api.get("/business/$businessId/products",
+          query: includeArchived ? {"includeArchived": "1"} : null);
   Future<ApiResponse> createProduct(String businessId,
           {required String name, required int priceMinor, String? description}) =>
       _api.post("/business/$businessId/products",
           body: {"name": name, "priceMinor": priceMinor, if (description != null) "description": description});
+
+  /// Edit an existing product (owner/manager). Only the provided fields are
+  /// sent; the server validates price/name/status and scopes the change to
+  /// the business that owns the row.
+  Future<ApiResponse> updateProduct(String businessId, String productId,
+          {String? name, int? priceMinor, String? description, String? status}) =>
+      _api.patch("/business/$businessId/products/$productId", body: {
+        if (name != null) "name": name,
+        if (priceMinor != null) "priceMinor": priceMinor,
+        if (description != null) "description": description,
+        if (status != null) "status": status,
+      });
+
+  /// Rename / re-describe the business itself (owner-only on the server).
+  Future<ApiResponse> updateBusiness(String businessId,
+          {String? name, String? description}) =>
+      _api.patch("/business/$businessId", body: {
+        if (name != null) "name": name,
+        if (description != null) "description": description,
+      });
+
+  /// A single business the caller is staff of.
+  Future<ApiResponse> get(String businessId) =>
+      _api.get("/business/$businessId");
   Future<ApiResponse> listOrders(String businessId, {int limit = 50}) =>
       _api.get("/business/$businessId/orders", query: {"limit": "$limit"});
   Future<ApiResponse> analytics(String businessId) =>

@@ -4,6 +4,53 @@
 Durable resume state for autonomous Codex sessions. The next agent must read this file together with `OPPA_MASTER_BUILD_SPEC.md`, `CODEX_AUTOPILOT.md`, `CODEX_BUILD_MAP.md` and the active task file.
 
 ## LAST UPDATED
+2026-09-17 (session 13, **VISUAL + FUNCTIONAL COMPLETION MISSION — ONBOARDING / THEMES / BUSINESS WORKSPACE**, branch `oppa-mobile-demo`) — **Executed the OPPA V1 Visual + Functional Completion Mission against the approved UI reference images: complete 8-step onboarding (incl. real OPPA ID claim), three approved themes that actually persist and render correctly, and a Business workspace whose creation flow genuinely works (it did not before). No fake success anywhere: everything added is either a real server-backed flow or an explicit honest lock.**
+
+**AUDIT FIRST (what the references required vs what existed)**: onboarding was `phone → otp → profile → done` only. Profile photo, "Choose your OPPA ID", "Choose Your OPPA Look" and the security step from the approved art were MISSING; the look picker was buried at the bottom of the phone screen. `themeId` was in-memory (reset on every restart) and `buildOppaTheme` was always called with `Brightness.dark` even for the light "Everyday OPPA" palette — white surface + dark text rendered as an unreadable dark scheme.
+
+**§4 ONBOARDING (now complete, 8 steps)**: Welcome/phone → OTP → profile (Speak/Type segmented voice-name entry, editable transcription, read-back) → profile picture → **Choose your OPPA ID** → **Choose Your OPPA Look** → security → "You're all set!" → Start OPPA.
+- OPPA ID is 100% real: three candidates are derived from the spoken/typed name, each checked against `GET /profile/oppa-id/available/:id` in parallel, free-text entry is debounce-checked, and `POST /profile/oppa-id` performs the claim. Continue is disabled until the SERVER says available; a rejected claim (taken in a race / reserved / rate-limited) keeps the user on the step with the server's reason. "Skip for now" is offered. Demo backend now mirrors the production shape/reserved/taken rules so the failure paths are exercisable.
+- Profile picture: rendered exactly like the reference (avatar circle + Camera/Gallery), but the API has NO media-upload endpoint in V1 — the buttons open the honest "not in this release" sheet and no fabricated `avatarUrl` is ever written.
+- Security step states only what is genuinely true (device really is enrolled by OTP verify; codes are single-use) and marks app-lock PIN / biometrics / 2FA as not shipped.
+- New `OppaFeature` locks added: `profilePhoto`, `appLock`, `requestMoney`, `attachments`.
+
+**§5 THEMES (three approved looks, now correct and durable)**:
+- REAL BUG: the chosen look reset to the default on every launch. `themeId` is now restored in `initState` from `SharedPreferences` via `ThemePreference` (encode/decode by enum name, unknown value falls back to the default) and persisted on every change. A State field initializer cannot read `widget`, so restoration happens before the first frame (no wrong-theme flash).
+- REAL BUG: `OppaTokens` gained a `brightness` field; `buildOppaTheme` now defaults to the palette's own lightness. "Everyday OPPA" is the approved LIGHT look (white surface, dark text) and finally renders as one.
+
+**§8 BUSINESS WORKSPACE ("creating a business must actually work") — ROOT CAUSE FOUND AND FIXED**:
+- REAL BUG (demo/APK): the in-process router matched only paths starting with `/business/`, so BOTH `GET /business` (the switcher's list) and `POST /business` (create) fell through to NOT_FOUND. Creation returned nothing and the switcher could not list stores — the workspace was broken exactly as reported. Fixed: the bare `/business` path routes now, and `_getBusiness`/`_postBusiness` were rewritten to be per-business.
+- REAL BUG: `GET /business` always returned the single hardcoded seed and every sub-screen ignored the business id, so a newly created store silently inherited another store's catalogue/orders/roster. Now: created businesses are appended to a real list, products/orders/staff/analytics are scoped by `businessId`, a fresh store starts genuinely empty (only its own owner staff row), and an unknown id is a real `BUSINESS_NOT_FOUND` 404.
+- REAL BUG (UX): the Business app is a fullscreen route on a nested Navigator with NO way out — a merchant who switched in was stuck. Added an explicit "Back to Personal" close action in the merchant app bar.
+- NEW REAL ENDPOINTS (task required "edit product" + "business profile"; neither existed): `PATCH /business/:businessId/products/:productId` (owner/manager; validates name/price/description/status, scoped to the owning business) and `PATCH /business/:businessId` (owner-only rename/re-describe). Repository gained `updateProduct` + `updateBusiness`; `listProducts` gained `includeArchived`, honoured ONLY for staff of that business so customers never see archived rows.
+- UI: products screen now lists archived rows for staff with a real archive/restore action, and a shared add/edit sheet (one form, so the two flows cannot disagree); new **Business profile** screen (real read + owner-only edit, app-bar title updates from persisted truth); new **Merchant translator** entry (the same production translator, framed for market/shop owners — hidden, never dead, when messaging is unavailable).
+- Merchant chat: order details and the customer list now offer "Message customer", which opens the REAL direct conversation via `POST /conversations/direct` (server-side idempotent). Messaging is a personal capability, so the hand-off leaves the Business workspace, switches to the Chats tab and opens the thread.
+
+**§6/§10 MESSAGING**: NEW **Message Details** sheet wired to the real per-recipient receipts endpoint (`GET /conversations/:id/messages/:messageId/receipts` → `{userId, deliveredAt, readAt}`): Sent / Delivered / Read by with real server timestamps, plus per-recipient rows and an honest privacy note. Tapping the receipt tick on your own message opens it; incoming messages never expose another member's read time. Exposed on `MessagesRepository.receipts()` and implemented in the demo backend (unknown message id ⇒ ZERO rows, never an invented reader).
+- Composer now shows the reference's attachment control as an honest lock (no media endpoint in V1).
+- Translator "Send to chat" replaced the raw conversation-id text box with a REAL conversation picker (names and unread counts from the server); the in-thread translator now gets the same picker. Before, users had to type a database id.
+
+**§13 WALLET**: approved wallet action row implemented — Deposit (real, payment initialize) · Send (real, challenge → ECDSA device signature → server confirm) · Request (no endpoint in V1, honest lock).
+
+**VERIFICATION (all executed this session)**:
+| Gate | Result |
+|---|---|
+| `flutter analyze` | No issues found |
+| `flutter test` | **70 pass / 0 fail** (+2 by-design skips) |
+| `bun run typecheck` (api) | clean |
+| `bun test` (api) | **158 pass / 0 fail** / 8 skip |
+| `tools/check_brand_assets.py` | PASS (launcher + adaptive + splash OPPA-branded) |
+| `codemagic.yaml` | parses; both workflows intact, demo define guard + brand guard run before the APK build |
+
+New tests (all green): `business_workspace_test.dart` (10) — creation persists and is listed, blank/oversized name refused with nothing created, a fresh store inherits no catalogue/orders and exactly one owner staff row, unknown id is a 404, add/edit/archive/restore product with documented error codes, rename persists, direct conversation is idempotent, per-store analytics isolation. `business_ui_test.dart` (3) — full merchant journey: switcher → create → lands in its own workspace with an empty catalogue; the created store is listed on the way back; the stored OPPA Look is restored on launch with the correct LIGHT brightness. `message_details_test.dart` (3) — receipts contract. `startup_ui_test.dart` extended to walk all 8 onboarding steps including the real OPPA ID claim and the taken-name rejection (server-decided, Continue blocked). API: 3 new business tests (product edit incl. invalid price/status/empty patch, staff-only archived listing, owner-scoped profile rename).
+
+**STILL BLOCKED (unchanged, environmental)**: (1) APK build + on-device/emulator verification — no Java/Android SDK here; the Codemagic `oppa-mobile-demo` workflow is wired and runs the same gates (analyze, full test suite, brand guard, demo-define-positive test, then `flutter build apk --debug --dart-define=OPPA_DEMO_MODE=true`). (2) 8 API tests SKIP because `DATABASE_URL` is absent from this session's shell; they pass where the secret exists. (3) Profile-photo upload and attachments are BLOCKED BY DESIGN for V1 (no media service) and are rendered as honest locks, not failures. (4) Real audio/video in calls remains out of scope (no WebRTC client stack; the call screen says so).
+
+**NEXT EXACT TASK**: run the Codemagic `oppa-mobile-demo` workflow on this commit; then on device: (1) confirm the OPPA launcher icon + splash; (2) walk the 8 onboarding steps — speak a name, claim an OPPA ID, pick each of the three looks and confirm Everyday OPPA renders LIGHT, kill and relaunch to confirm the look persisted; (3) Business: switcher → Create a Business → confirm it appears in the list after returning, add/edit/archive a product, rename the store from Business profile; (4) Chats: send a message, tap the receipt tick → Message Details shows real Sent/Delivered/Read times; (5) translator → Send to chat → pick a real conversation. Then merge `oppa-mobile-demo` → `main` per owner policy.
+
+---
+
+## PREVIOUS SESSION (12)
 2026-09-16 (session 12, **NEXT-APK V1 COMPLETION PASS — §9/§10/§11/§13/§14/§16 CLOSED**, branch `oppa-mobile-demo`) — **Executed CODEX_NEXT_APK_V1_COMPLETION_TASK.md sections 6/9/10/11/13/14/15/16 to completion: real mark-read receipts end-to-end, honest call states, notification tap-to-context + preferences, server-authoritative wallet with transaction detail, and zero dead navigation. All gates green: flutter analyze clean, 53 mobile tests pass, 155 API tests pass, brand guard passes.**
 
 **§6 Branding (completed this session)**: OPPA Pulse launcher icons (all densities) + adaptive icon (API 26+) + brand launch splash — all rendered procedurally by `tools/generate_oppa_icons.py` from the same orb geometry as the in-app vector painter (no invented art, ~250 KB total). New `tools/check_brand_assets.py` CI guard (wired into BOTH codemagic workflows before the APK builds) fails the build if any Flutter-default launcher icon returns, verified in both directions (OPPA art passes; wrong pin / unparsable default fails).

@@ -1,10 +1,12 @@
 import "package:flutter/material.dart";
 
+import "../../core/api_client_base.dart";
 import "../../core/connectivity_service.dart";
 import "../../core/session_store.dart";
 import "../../data/repositories.dart";
 import "../widgets/common.dart";
 import "home_screens.dart" show SupportScreen;
+import "translator_screen.dart" show TranslatorScreen;
 
 /// OPPA Business — the merchant surface. Deliberately a different app from
 /// the consumer OPPA app: its own navigation (Dashboard / Orders / Products /
@@ -22,6 +24,9 @@ class BusinessApp extends StatelessWidget {
     required this.connectivity,
     required this.initialBusinessId,
     required this.initialBusinessName,
+    this.onMessageCustomer,
+    this.messages,
+    this.conversations,
   });
 
   final SessionStore session;
@@ -29,6 +34,15 @@ class BusinessApp extends StatelessWidget {
   final ConnectivityService connectivity;
   final String initialBusinessId;
   final String initialBusinessName;
+
+  /// Hand-off into the personal Chats tab (messaging is a personal
+  /// capability). Null when the caller cannot supply it.
+  final void Function(String customerUserId)? onMessageCustomer;
+
+  /// Real messaging repository, used by the merchant translator to send a
+  /// ready translation into a chat. Null hides that entry.
+  final MessagesRepository? messages;
+  final ConversationsRepository? conversations;
 
   @override
   Widget build(BuildContext context) {
@@ -40,6 +54,9 @@ class BusinessApp extends StatelessWidget {
           connectivity: connectivity,
           businessId: initialBusinessId,
           businessName: initialBusinessName,
+          onMessageCustomer: onMessageCustomer,
+          messages: messages,
+          conversations: conversations,
         ),
       ),
     );
@@ -57,6 +74,9 @@ class BusinessShell extends StatefulWidget {
     required this.connectivity,
     required this.businessId,
     required this.businessName,
+    this.onMessageCustomer,
+    this.messages,
+    this.conversations,
   });
 
   final SessionStore session;
@@ -64,6 +84,9 @@ class BusinessShell extends StatefulWidget {
   final ConnectivityService connectivity;
   final String businessId;
   final String businessName;
+  final void Function(String customerUserId)? onMessageCustomer;
+  final MessagesRepository? messages;
+  final ConversationsRepository? conversations;
 
   @override
   State<BusinessShell> createState() => _BusinessShellState();
@@ -71,6 +94,10 @@ class BusinessShell extends StatefulWidget {
 
 class _BusinessShellState extends State<BusinessShell> {
   int _tab = 0;
+
+  /// Mirrors the server's business name; updated after a real rename so the
+  /// app bar reflects persisted truth rather than the value we entered with.
+  late String _businessName = widget.businessName;
 
   /// Registered by [BusinessDashboardScreen] so the app-bar refresh button
   /// triggers the dashboard's real fetch.
@@ -91,7 +118,8 @@ class _BusinessShellState extends State<BusinessShell> {
       BusinessOrdersScreen(
           business: widget.business,
           connectivity: widget.connectivity,
-          businessId: widget.businessId),
+          businessId: widget.businessId,
+          onMessageCustomer: widget.onMessageCustomer),
       BusinessProductsScreen(
           business: widget.business,
           connectivity: widget.connectivity,
@@ -101,14 +129,27 @@ class _BusinessShellState extends State<BusinessShell> {
           business: widget.business,
           connectivity: widget.connectivity,
           businessId: widget.businessId,
-          businessName: widget.businessName),
+          businessName: widget.businessName,
+          onMessageCustomer: widget.onMessageCustomer,
+          messages: widget.messages,
+          conversations: widget.conversations,
+          onBusinessRenamed: (name) => setState(() => _businessName = name)),
     ];
     return StreamBuilder<ConnectState>(
       stream: widget.connectivity.stream,
       builder: (context, _) => Scaffold(
         appBar: AppBar(
+          // The Business workspace is a fullscreen route with its own nested
+          // Navigator, so it needs an explicit way out. Without this, a
+          // merchant who switched in had no visible route back to Personal.
+          leading: IconButton(
+            tooltip: "Back to Personal",
+            onPressed: () =>
+                Navigator.of(context, rootNavigator: true).pop(),
+            icon: const Icon(Icons.close),
+          ),
           title: Text(switch (_tab) {
-            0 => widget.businessName,
+            0 => _businessName,
             1 => "Orders",
             2 => "Products",
             _ => "Business",
@@ -466,7 +507,10 @@ class _BusinessProductsScreenState extends State<BusinessProductsScreen> {
       _loading = true;
       _error = null;
     });
-    final r = await widget.business.listProducts(widget.businessId);
+    // Staff view: archived products are listed too, so they can be restored.
+    // The server only honours this for staff of the business.
+    final r = await widget.business
+        .listProducts(widget.businessId, includeArchived: true);
     if (!mounted) return;
     setState(() {
       _loading = false;
@@ -481,15 +525,24 @@ class _BusinessProductsScreenState extends State<BusinessProductsScreen> {
     });
   }
 
-  Future<void> _add() async {
-    final created = await showDialog<({String name, int priceMinor, String? description})>(
+  /// One sheet for add and edit: the approved "Add Product" form, reused so
+  /// the two flows can never disagree about validation or field set.
+  Future<void> _productSheet({Map? existing}) async {
+    final isEdit = existing != null;
+    final edited = await showDialog<bool>(
       context: context,
       builder: (context) {
-        final name = TextEditingController();
-        final price = TextEditingController();
-        final description = TextEditingController();
+        final name = TextEditingController(text: "${existing?["name"] ?? ""}");
+        final existingMinor = (existing?["priceMinor"] as num?)?.toInt() ?? 0;
+        final price = TextEditingController(
+            text: isEdit
+                ? (existingMinor / 100)
+                    .toStringAsFixed(existingMinor % 100 == 0 ? 0 : 2)
+                : "");
+        final description =
+            TextEditingController(text: "${existing?["description"] ?? ""}");
         return AlertDialog(
-          title: const Text("Add product"),
+          title: Text(isEdit ? "Edit product" : "Add product"),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -506,44 +559,78 @@ class _BusinessProductsScreenState extends State<BusinessProductsScreen> {
           ),
           actions: [
             TextButton(
-                onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel")),
             FilledButton(
-                onPressed: () {
+                onPressed: () async {
                   final naira = int.tryParse(price.text.trim());
                   if (name.text.trim().isEmpty || naira == null || naira <= 0) return;
-                  Navigator.pop(context, (
-                    name: name.text.trim(),
-                    priceMinor: naira * 100,
-                    description: description.text.trim().isEmpty
-                        ? null
-                        : description.text.trim(),
-                  ));
+                  final desc = description.text.trim().isEmpty
+                      ? null
+                      : description.text.trim();
+                  final ApiResponse r;
+                  if (isEdit) {
+                    r = await widget.business.updateProduct(
+                      widget.businessId,
+                      "${existing["id"]}",
+                      name: name.text.trim(),
+                      priceMinor: naira * 100,
+                      description: desc ?? "",
+                    );
+                  } else {
+                    r = await widget.business.createProduct(
+                      widget.businessId,
+                      name: name.text.trim(),
+                      priceMinor: naira * 100,
+                      description: desc,
+                    );
+                  }
+                  if (!context.mounted) return;
+                  Navigator.pop(context, r.isSuccess);
+                  if (!r.isSuccess) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(r.errorCode ??
+                            "Could not save the product")));
+                  }
                 },
-                child: const Text("Save product")),
+                child: Text(isEdit ? "Save changes" : "Save product")),
           ],
         );
       },
     );
-    if (created == null) return;
-    final r = await widget.business.createProduct(
+    if (edited == true) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(isEdit ? "Product updated" : "Product added")));
+      await _load();
+    }
+  }
+
+  /// Archive (hide from customers) or restore. Server-side this is a status
+  /// change on the merchant's own product; customers only ever see active rows.
+  Future<void> _setArchived(Map product, bool archived) async {
+    final r = await widget.business.updateProduct(
       widget.businessId,
-      name: created.name,
-      priceMinor: created.priceMinor,
-      description: created.description,
+      "${product["id"]}",
+      status: archived ? "archived" : "active",
     );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(r.isSuccess
-            ? "Product added"
-            : (r.errorCode ?? "Could not add product"))));
-    if (r.isSuccess) _load();
+            ? (archived
+                ? "Archived — hidden from customers"
+                : "Restored — customers can order it again")
+            : (r.errorCode ?? "Could not update the product"))));
+    if (r.isSuccess) await _load();
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final active = _products.where((p) => "${p["status"]}" != "archived").length;
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _add,
+        onPressed: () => _productSheet(),
         icon: const Icon(Icons.add),
         label: const Text("Add product"),
       ),
@@ -565,19 +652,43 @@ class _BusinessProductsScreenState extends State<BusinessProductsScreen> {
                     : ListView(
                         padding: const EdgeInsets.all(16),
                         children: [
+                          Text("$active active · ${_products.length} total",
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                  color: theme.colorScheme.onSurface
+                                      .withValues(alpha: 0.6))),
+                          const SizedBox(height: 8),
                           for (final p in _products)
                             Card(
                               margin: const EdgeInsets.only(bottom: 8),
                               child: ListTile(
+                                onTap: () => _productSheet(existing: p),
                                 leading: const Icon(Icons.inventory_2_outlined),
                                 title: Text("${p["name"] ?? "Product"}"),
                                 subtitle: Text(
                                     _naira((p["priceMinor"] as num? ?? 0).toInt())),
-                                trailing: "${p["status"] ?? ""}" == "archived"
-                                    ? const Chip(label: Text("Archived"))
-                                    : null,
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if ("${p["status"]}" == "archived")
+                                      const Padding(
+                                        padding: EdgeInsets.only(right: 4),
+                                        child: Chip(label: Text("Archived")),
+                                      ),
+                                    IconButton(
+                                      tooltip: "${p["status"]}" == "archived"
+                                          ? "Restore product"
+                                          : "Archive product",
+                                      onPressed: () => _setArchived(
+                                          p, "${p["status"]}" != "archived"),
+                                      icon: Icon("${p["status"]}" == "archived"
+                                          ? Icons.unarchive_outlined
+                                          : Icons.archive_outlined),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
+                          const SizedBox(height: 72),
                         ],
                       ),
       ),
@@ -594,8 +705,10 @@ class BusinessOrdersScreen extends StatefulWidget {
     required this.business,
     required this.connectivity,
     required this.businessId,
+    this.onMessageCustomer,
   });
 
+  final void Function(String customerUserId)? onMessageCustomer;
   final BusinessRepository business;
   final ConnectivityService connectivity;
   final String businessId;
@@ -725,7 +838,9 @@ class _BusinessOrdersScreenState extends State<BusinessOrdersScreen> {
                                         MaterialPageRoute(
                                           builder: (_) => BusinessOrderDetailsScreen(
                                               business: widget.business,
-                                              order: o),
+                                              order: o,
+                                              onMessageCustomer:
+                                                  widget.onMessageCustomer),
                                         ),
                                       ),
                                       title: Text(_orderRef(o)),
@@ -761,10 +876,12 @@ class BusinessOrderDetailsScreen extends StatelessWidget {
     super.key,
     required this.business,
     required this.order,
+    this.onMessageCustomer,
   });
 
   final BusinessRepository business;
   final Map order;
+  final void Function(String customerUserId)? onMessageCustomer;
 
   @override
   Widget build(BuildContext context) {
@@ -816,6 +933,19 @@ class BusinessOrderDetailsScreen extends StatelessWidget {
               title: Text("${item["name"] ?? item["productId"] ?? "Item"}"),
               trailing: Text("× ${item["quantity"] ?? 1}"),
             ),
+          // Merchant chat: opens the REAL direct conversation with the
+          // customer who placed this order (server-side idempotent). Personal
+          // messaging stays in the personal workspace, so this hands off.
+          if ((order["customerUserId"] ?? "") != "" &&
+              onMessageCustomer != null) ...[
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () =>
+                  onMessageCustomer!("${order["customerUserId"]}"),
+              icon: const Icon(Icons.chat_bubble_outline),
+              label: const Text("Message customer"),
+            ),
+          ],
           const SizedBox(height: 16),
           if (status == "paid")
             FilledButton.icon(
@@ -857,6 +987,10 @@ class BusinessMoreScreen extends StatelessWidget {
     required this.connectivity,
     required this.businessId,
     required this.businessName,
+    this.onMessageCustomer,
+    this.messages,
+    this.conversations,
+    this.onBusinessRenamed,
   });
 
   final SessionStore session;
@@ -864,6 +998,10 @@ class BusinessMoreScreen extends StatelessWidget {
   final ConnectivityService connectivity;
   final String businessId;
   final String businessName;
+  final void Function(String customerUserId)? onMessageCustomer;
+  final MessagesRepository? messages;
+  final ConversationsRepository? conversations;
+  final void Function(String newName)? onBusinessRenamed;
 
   @override
   Widget build(BuildContext context) {
@@ -887,7 +1025,9 @@ class BusinessMoreScreen extends StatelessWidget {
                 subtitle: const Text("People who ordered from you"),
                 onTap: () => Navigator.of(context).push(MaterialPageRoute(
                     builder: (_) => BusinessCustomersScreen(
-                        business: business, businessId: businessId))),
+                        business: business,
+                        businessId: businessId,
+                        onMessageCustomer: onMessageCustomer))),
               ),
               ListTile(
                 leading: const Icon(Icons.insights_outlined),
@@ -919,13 +1059,248 @@ class BusinessMoreScreen extends StatelessWidget {
         Text("Store", style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 8),
         Card(
-          child: ListTile(
-            leading: const Icon(Icons.storefront_outlined),
-            title: Text(businessName),
-            subtitle: const Text("Business account · merchant"),
+          child: Column(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.storefront_outlined),
+                title: Text(businessName),
+                subtitle: const Text("Business profile — name and description"),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => BusinessProfileScreen(
+                          business: business,
+                          businessId: businessId,
+                          businessName: businessName,
+                          onRenamed: onBusinessRenamed,
+                        ))),
+              ),
+              // Merchant translator: the SAME real translation service, framed
+              // for market and shop owners (approved "Merchant Phrase" board).
+              // Nothing is faked — it is the production translator screen, and
+              // it only appears when messaging is actually available.
+              if (messages != null)
+                ListTile(
+                  leading: const Icon(Icons.translate_rounded),
+                  title: const Text("Merchant translator"),
+                  subtitle: const Text(
+                      "Speak in your language, sell in theirs — same translator as Chats"),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                      builder: (_) => TranslatorScreen(
+                          messages: messages!,
+                          conversations: conversations))),
+                ),
+            ],
           ),
         ),
       ],
+    );
+  }
+}
+
+/// Business profile: the merchant's public identity. Renaming is owner-only on
+/// the server, so a non-owner simply gets the server's refusal — this screen
+/// never pretends the change was saved.
+class BusinessProfileScreen extends StatefulWidget {
+  const BusinessProfileScreen({
+    super.key,
+    required this.business,
+    required this.businessId,
+    required this.businessName,
+    this.onRenamed,
+  });
+
+  final BusinessRepository business;
+  final String businessId;
+  final String businessName;
+  final void Function(String newName)? onRenamed;
+
+  @override
+  State<BusinessProfileScreen> createState() => _BusinessProfileScreenState();
+}
+
+class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
+  Map? _record;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final r = await widget.business.get(widget.businessId);
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      if (r.isSuccess && r.body is Map) {
+        _record = (r.body as Map).cast<String, dynamic>();
+      } else {
+        _error = r.errorCode ?? "Could not load the business profile";
+      }
+    });
+  }
+
+  Future<void> _edit() async {
+    final current = _record ?? const <String, dynamic>{};
+    final edited = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        final name = TextEditingController(
+            text: "${current["name"] ?? widget.businessName}");
+        final description =
+            TextEditingController(text: "${current["description"] ?? ""}");
+        return AlertDialog(
+          title: const Text("Edit business profile"),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                    controller: name,
+                    maxLength: 120,
+                    decoration: const InputDecoration(labelText: "Business name")),
+                TextField(
+                    controller: description,
+                    maxLength: 1000,
+                    decoration: const InputDecoration(
+                        labelText: "Description (optional)")),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel")),
+            FilledButton(
+                onPressed: () async {
+                  if (name.text.trim().isEmpty) return;
+                  final r = await widget.business.updateBusiness(
+                    widget.businessId,
+                    name: name.text.trim(),
+                    description: description.text.trim(),
+                  );
+                  if (!context.mounted) return;
+                  if (!r.isSuccess) {
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text(r.errorCode ??
+                            "Could not save — only the owner can edit the store")));
+                    return;
+                  }
+                  Navigator.pop(context, true);
+                },
+                child: const Text("Save changes")),
+          ],
+        );
+      },
+    );
+    if (edited != true) return;
+    await _load();
+    final name = "${_record?["name"] ?? widget.businessName}";
+    widget.onRenamed?.call(name);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(const SnackBar(content: Text("Business profile saved")));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final record = _record;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Business profile"),
+        actions: [
+          if (record != null)
+            TextButton(
+              onPressed: _loading ? null : _edit,
+              child: const Text("Edit"),
+            ),
+        ],
+      ),
+      body: _loading
+          ? const StateViews.loading()
+          : _error != null
+              ? ListView(children: [
+                  const SizedBox(height: 48),
+                  StateViews.error(_error!, onRetry: _load),
+                ])
+              : ListView(
+                  padding: const EdgeInsets.all(16),
+                  children: [
+                    Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                CircleAvatar(
+                                  radius: 26,
+                                  child: Text(
+                                    "${record?["name"] ?? widget.businessName}"
+                                        .characters
+                                        .first
+                                        .toUpperCase(),
+                                  ),
+                                ),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                          "${record?["name"] ?? widget.businessName}",
+                                          style: theme.textTheme.titleLarge
+                                              ?.copyWith(
+                                                  fontWeight: FontWeight.w700)),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                          "${record?["status"] ?? "active"} · business account",
+                                          style: theme.textTheme.bodySmall
+                                              ?.copyWith(
+                                                  color: theme.colorScheme
+                                                      .onSurface
+                                                      .withValues(alpha: 0.6))),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Text("Description",
+                                style: theme.textTheme.bodySmall?.copyWith(
+                                    color: theme.colorScheme.onSurface
+                                        .withValues(alpha: 0.6))),
+                            const SizedBox(height: 4),
+                            Text(
+                              ("${record?["description"] ?? ""}").trim().isEmpty
+                                  ? "No description yet — tap Edit to add one customers will see."
+                                  : "${record?["description"]}",
+                              style: theme.textTheme.bodyMedium,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      "Only the owner can rename the store. Managers and staff "
+                      "run the day-to-day work instead.",
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurface
+                              .withValues(alpha: 0.6)),
+                    ),
+                  ],
+                ),
     );
   }
 }
@@ -1131,10 +1506,12 @@ class BusinessCustomersScreen extends StatefulWidget {
     super.key,
     required this.business,
     required this.businessId,
+    this.onMessageCustomer,
   });
 
   final BusinessRepository business;
   final String businessId;
+  final void Function(String customerUserId)? onMessageCustomer;
 
   @override
   State<BusinessCustomersScreen> createState() =>
@@ -1223,6 +1600,15 @@ class _BusinessCustomersScreenState extends State<BusinessCustomersScreen> {
                                     "Customer ${entry.key.length > 8 ? entry.key.substring(0, 8) : entry.key}…"),
                                 subtitle: Text(
                                     "${entry.value.orders} order(s) · spent ${_naira(entry.value.spentMinor)}"),
+                                trailing: widget.onMessageCustomer == null
+                                    ? null
+                                    : IconButton(
+                                        tooltip: "Message customer",
+                                        onPressed: () => widget
+                                            .onMessageCustomer!(entry.key),
+                                        icon: const Icon(
+                                            Icons.chat_bubble_outline),
+                                      ),
                               ),
                             ),
                           const SizedBox(height: 8),

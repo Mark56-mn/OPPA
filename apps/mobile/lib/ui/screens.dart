@@ -56,10 +56,45 @@ class HomeShell extends StatefulWidget {
   State<HomeShell> createState() => _HomeShellState();
 }
 
-class _HomeShellState extends State<HomeShell> {
+class _HomeShellState extends State<HomeShell>
+    with SingleTickerProviderStateMixin {
   /// Registered by [ChatsScreen] (its refresh thunk) so threads can trigger a
   /// badge re-sync after they close. Nullable: set once the tab is built.
   Future<void> Function()? _chatsRefresh;
+
+  /// Explicit controller (instead of DefaultTabController) so the Business
+  /// workspace can hand off to the personal Chats tab when a merchant taps
+  /// "Message customer".
+  late final TabController _tabs =
+      TabController(length: 4, vsync: this);
+
+  @override
+  void dispose() {
+    _tabs.dispose();
+    super.dispose();
+  }
+
+  /// Merchant → customer chat. Messaging is a PERSONAL capability: opening a
+  /// chat from inside the Business workspace leaves that workspace and lands in
+  /// Chats with the real direct conversation (server-side idempotent).
+  Future<void> _messageCustomer(String customerUserId) async {
+    final r = await widget.conversations.createDirect(customerUserId);
+    if (!mounted) return;
+    final body = r.body;
+    if (!r.isSuccess || body is! Map) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              r.errorCode ?? "Could not open a chat with this customer")));
+      return;
+    }
+    final conversation =
+        body.cast<String, dynamic>()..putIfAbsent("unreadCount", () => 0);
+    // Leave the business workspace (it was pushed on the root navigator).
+    Navigator.of(context, rootNavigator: true)
+        .popUntil((route) => route.isFirst);
+    _tabs.animateTo(0);
+    _openConversation(context, conversation);
+  }
 
   void _openConversation(BuildContext context, Map conversation) {
     Navigator.of(context)
@@ -68,7 +103,8 @@ class _HomeShellState extends State<HomeShell> {
                 conversation: conversation,
                 messages: widget.messages,
                 calls: widget.calls,
-                connectivity: widget.connectivity)))
+                connectivity: widget.connectivity,
+                conversations: widget.conversations)))
         .whenComplete(() {
       // Returning from a thread: the thread marks its incoming messages read
       // (POST /conversations/:id/read), so unread badges may have changed.
@@ -81,9 +117,7 @@ class _HomeShellState extends State<HomeShell> {
     return StreamBuilder<ConnectState>(
       stream: widget.connectivity.stream,
       builder: (context, _) {
-        return DefaultTabController(
-          length: 4,
-          child: Scaffold(
+        return Scaffold(
             body: StreamBuilder<int>(
               stream: widget.queue.depthStream,
               builder: (context, depthSnap) => Column(
@@ -97,7 +131,9 @@ class _HomeShellState extends State<HomeShell> {
                     pendingCount: depthSnap.data ?? 0,
                   ),
                   Expanded(
-                    child: TabBarView(children: [
+                    child: TabBarView(
+                        controller: _tabs,
+                        children: [
                       ChatsScreen(
                         conversations: widget.conversations,
                         connectivity: widget.connectivity,
@@ -111,6 +147,7 @@ class _HomeShellState extends State<HomeShell> {
                         onThemeChanged: widget.onThemeChanged,
                         onOpenConversation: (c) => _openConversation(context, c),
                         onRefreshChanged: (t) => _chatsRefresh = t,
+                        onMessageCustomer: _messageCustomer,
                       ),
                       WalletScreen(
                           wallet: widget.wallet,
@@ -129,21 +166,22 @@ class _HomeShellState extends State<HomeShell> {
                           connectivity: widget.connectivity,
                           themeId: widget.themeId,
                           onThemeChanged: widget.onThemeChanged,
-                          onSignOut: widget.onSignOut),
-                    ]),
+                          onSignOut: widget.onSignOut,
+                          onMessageCustomer: _messageCustomer),
+                        ]),
                   ),
                 ],
               ),
             ),
-            bottomNavigationBar: const TabBar(
-              tabs: [
+            bottomNavigationBar: TabBar(
+              controller: _tabs,
+              tabs: const [
                 Tab(icon: Icon(Icons.chat_bubble_outline), text: "Chats"),
                 Tab(icon: Icon(Icons.account_balance_wallet_outlined), text: "Wallet"),
                 Tab(icon: Icon(Icons.call_outlined), text: "Calls"),
                 Tab(icon: Icon(Icons.person_outline), text: "Me"),
               ],
             ),
-          ),
         );
       },
     );

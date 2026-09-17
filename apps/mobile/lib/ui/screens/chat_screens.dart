@@ -9,6 +9,7 @@ import "../../core/session_store.dart";
 import "../../core/translation_service.dart";
 import "../../core/voice_service.dart";
 import "../../data/repositories.dart";
+import "../../design/locked_features.dart";
 import "../../design/oppa_themes.dart";
 import "../widgets/common.dart";
 import "call_screen.dart";
@@ -34,6 +35,7 @@ class ChatsScreen extends StatefulWidget {
     required this.onThemeChanged,
     required this.onOpenConversation,
     this.onRefreshChanged,
+    this.onMessageCustomer,
   });
 
   final ConversationsRepository conversations;
@@ -51,6 +53,10 @@ class ChatsScreen extends StatefulWidget {
   /// Called with the screen's refresh thunk so the shell can trigger a list
   /// reload after a thread closes (badges may have changed via mark-read).
   final void Function(Future<void> Function())? onRefreshChanged;
+
+  /// Merchant → customer chat hand-off, forwarded to the Business workspace
+  /// through the switcher. Null when messaging is unavailable to the caller.
+  final void Function(String customerUserId)? onMessageCustomer;
 
   @override
   State<ChatsScreen> createState() => _ChatsScreenState();
@@ -93,7 +99,10 @@ class _ChatsScreenState extends State<ChatsScreen> {
 
   void _openTranslator() {
     Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => TranslatorScreen(messages: widget.messages)));
+        MaterialPageRoute(
+            builder: (_) => TranslatorScreen(
+                messages: widget.messages,
+                conversations: widget.conversations)));
   }
 
   @override
@@ -120,7 +129,10 @@ class _ChatsScreenState extends State<ChatsScreen> {
             onPressed: () => showWorkspaceSwitcher(context,
                 session: widget.session,
                 business: widget.business,
-                connectivity: widget.connectivity),
+                connectivity: widget.connectivity,
+                onMessageCustomer: widget.onMessageCustomer,
+                messages: widget.messages,
+                conversations: widget.conversations),
             icon: const Icon(Icons.swap_horiz_outlined),
           ),
         ],
@@ -305,12 +317,16 @@ class ChatThreadScreen extends StatefulWidget {
     required this.messages,
     required this.calls,
     required this.connectivity,
+    this.conversations,
   });
 
   final Map conversation;
   final MessagesRepository messages;
   final CallsRepository calls;
   final ConnectivityService connectivity;
+
+  /// Lets the in-thread translator offer the real "send to chat" picker.
+  final ConversationsRepository? conversations;
 
   @override
   State<ChatThreadScreen> createState() => _ChatThreadScreenState();
@@ -548,6 +564,15 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
 
   /// Translates a message into [target] via the offline phrasebook and, when
   /// [speak] is set, reads it aloud (for non-literate users).
+  void _openMessageDetails(Map message) {
+    final conversationId = "${widget.conversation["id"] ?? ""}";
+    if (conversationId.isEmpty) return;
+    _showMessageDetails(context,
+        messages: widget.messages,
+        conversationId: conversationId,
+        message: message);
+  }
+
   Future<void> _translateMessage(Map message,
       {required String target, required bool speak}) async {
     final id = "${message["id"] ?? ""}";
@@ -597,7 +622,9 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
 
   Future<void> _openTranslator() async {
     await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => TranslatorScreen(messages: widget.messages)));
+        builder: (_) => TranslatorScreen(
+            messages: widget.messages,
+            conversations: widget.conversations)));
   }
 
   @override
@@ -674,6 +701,9 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                                 target: _myTranslateTarget, speak: false),
                             onTranslateSpeak: () => _translateMessage(m,
                                 target: _myTranslateTarget, speak: true),
+                            onDetails: (isMine && m["status"] != "pending")
+                                ? () => _openMessageDetails(m)
+                                : null,
                           );
                         },
                       ),
@@ -707,6 +737,16 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
                           onPressed: _toggleVoiceInput,
                           tooltip: _listening ? "Stop" : "Voice input",
                         ),
+                        // Approved composer shows an attachment control. There
+                        // is no media endpoint in V1, so it opens the honest
+                        // "not in this release" explanation — never a dead tap
+                        // and never a fake upload.
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.attach_file),
+                          tooltip: "Attachments",
+                          onPressed: () => showLockedFeatureSheet(
+                              context, OppaFeature.attachments),
+                        ),
                       ),
                       onSubmitted: (_) => _send(),
                     ),
@@ -730,6 +770,223 @@ class _ChatThreadScreenState extends State<ChatThreadScreen> {
 /// actions. Sent state is honest and server-derived: pending shows a clock,
 /// confirmed a single check, and read (≥1 other member's server receipt) a
 /// double check — never fabricated client-side.
+/// Message Details (approved art: Sent / Delivered to / Read by, with times).
+/// Every line comes from the server's receipt rows — the client never invents
+/// a delivery or read time, and it says so when the server has not reported
+/// one yet.
+Future<void> _showMessageDetails(
+  BuildContext context, {
+  required MessagesRepository messages,
+  required String conversationId,
+  required Map message,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (_) => _MessageDetailsSheet(
+      messages: messages,
+      conversationId: conversationId,
+      message: message,
+    ),
+  );
+}
+
+class _MessageDetailsSheet extends StatefulWidget {
+  const _MessageDetailsSheet({
+    required this.messages,
+    required this.conversationId,
+    required this.message,
+  });
+
+  final MessagesRepository messages;
+  final String conversationId;
+  final Map message;
+
+  @override
+  State<_MessageDetailsSheet> createState() => _MessageDetailsSheetState();
+}
+
+class _MessageDetailsSheetState extends State<_MessageDetailsSheet> {
+  List<Map> _receipts = const [];
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final r = await widget.messages
+        .receipts(widget.conversationId, "${widget.message["id"] ?? ""}");
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      if (r.isSuccess) {
+        _receipts = (((r.body as Map?)?["receipts"] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .toList();
+      } else {
+        _error = r.errorCode ?? "Could not load delivery details";
+      }
+    });
+  }
+
+  static String _time(String? iso) {
+    if (iso == null || iso.isEmpty) return "";
+    final parsed = DateTime.tryParse(iso);
+    if (parsed == null) return "";
+    final local = parsed.toLocal();
+    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    final minute = local.minute.toString().padLeft(2, "0");
+    return "$hour:$minute ${local.hour < 12 ? "AM" : "PM"}";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final sent = _time("${widget.message["createdAt"] ?? ""}");
+    final delivered = _receipts
+        .map((r) => r["deliveredAt"] as String?)
+        .whereType<String>()
+        .toList()
+      ..sort();
+    final read = _receipts
+        .map((r) => r["readAt"] as String?)
+        .whereType<String>()
+        .toList()
+      ..sort();
+    final readCount =
+        _receipts.where((r) => (r["readAt"] as String?) != null).length;
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 20, 24, 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Message details",
+                style: theme.textTheme.titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 16),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text("${widget.message["body"] ?? ""}",
+                    style: theme.textTheme.bodyLarge),
+              ),
+            ),
+            const SizedBox(height: 16),
+            if (_loading)
+              const Center(
+                  child: Padding(
+                      padding: EdgeInsets.all(16),
+                      child: CircularProgressIndicator()))
+            else if (_error != null)
+              StateViews.error(_error!, onRetry: _load)
+            else ...[
+              _ReceiptRow(
+                icon: Icons.send_outlined,
+                label: "Sent",
+                detail: sent.isEmpty ? "just now" : sent,
+              ),
+              _ReceiptRow(
+                icon: Icons.done,
+                label: "Delivered",
+                detail: delivered.isEmpty
+                    ? "Waiting for the server to confirm delivery"
+                    : _time(delivered.first),
+              ),
+              _ReceiptRow(
+                icon: read.isEmpty ? Icons.done : Icons.done_all,
+                label: "Read by",
+                detail: read.isEmpty
+                    ? "No one has opened this chat since it was sent"
+                    : "$readCount of ${_receipts.length} · first at ${_time(read.first)}",
+              ),
+              if (_receipts.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text("Recipients",
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 4),
+                for (final r in _receipts)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(
+                        (r["readAt"] as String?) != null
+                            ? Icons.done_all
+                            : Icons.done,
+                        size: 18),
+                    title: Text("Member ${("${r["userId"] ?? ""}").length > 8 ? "${r["userId"]}".substring(0, 8) : "${r["userId"] ?? ""}"}"),
+                    subtitle: Text((r["readAt"] as String?) != null
+                        ? "Read ${_time("${r["readAt"]}")}"
+                        : "Delivered ${_time(r["deliveredAt"] as String?)}"),
+                  ),
+              ],
+              const SizedBox(height: 8),
+              Text(
+                "Receipt times come from OPPA's servers. Member names stay "
+                "hidden here to protect everyone's privacy.",
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReceiptRow extends StatelessWidget {
+  const _ReceiptRow({
+    required this.icon,
+    required this.label,
+    required this.detail,
+  });
+
+  final IconData icon;
+  final String label;
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: theme.colorScheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(label,
+                style: theme.textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w700)),
+          ),
+          Flexible(
+            child: Text(detail,
+                textAlign: TextAlign.right,
+                style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.7))),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
@@ -737,6 +994,7 @@ class _MessageBubble extends StatelessWidget {
     required this.translation,
     required this.onTranslate,
     required this.onTranslateSpeak,
+    this.onDetails,
   });
 
   final Map message;
@@ -744,6 +1002,10 @@ class _MessageBubble extends StatelessWidget {
   final TranslationResult? translation;
   final VoidCallback onTranslate;
   final VoidCallback onTranslateSpeak;
+
+  /// Opens Message Details (real per-recipient receipts). Null for incoming
+  /// messages — a recipient's own read time is not theirs to inspect.
+  final VoidCallback? onDetails;
 
   @override
   Widget build(BuildContext context) {
@@ -810,20 +1072,30 @@ class _MessageBubble extends StatelessWidget {
                   if (isMine) ...[
                     // Receipt state (own messages only): pending clock → sent
                     // check → read double-check. Driven by server fields.
-                    Icon(
-                      pending
-                          ? Icons.schedule
-                          : readByAny
-                              ? Icons.done_all
-                              : Icons.done,
-                      size: 14,
-                      color: (isMine
-                              ? theme.colorScheme.onPrimary
-                              : theme.colorScheme.onSurface)
-                          .withValues(
-                              alpha: pending
-                                  ? 0.5
-                                  : (readByAny ? 0.95 : 0.6)),
+                    // Tapping it opens Message Details with the real receipt
+                    // times from GET /messages/:id/receipts.
+                    Tooltip(
+                      message: onDetails == null
+                          ? "Waiting for server confirmation"
+                          : "Message details",
+                      child: InkWell(
+                        onTap: onDetails,
+                        child: Icon(
+                          pending
+                              ? Icons.schedule
+                              : readByAny
+                                  ? Icons.done_all
+                                  : Icons.done,
+                          size: 14,
+                          color: (isMine
+                                  ? theme.colorScheme.onPrimary
+                                  : theme.colorScheme.onSurface)
+                              .withValues(
+                                  alpha: pending
+                                      ? 0.5
+                                      : (readByAny ? 0.95 : 0.6)),
+                        ),
+                      ),
                     ),
                     const SizedBox(width: 4),
                   ],
