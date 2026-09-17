@@ -290,6 +290,279 @@ class _CallButton extends StatelessWidget {
 /// V1 calls are per-conversation over the REST signaling lifecycle, so the
 /// tab lists conversations with one-tap voice call; video stays VISIBLE but
 /// LOCKED (honest roadmap, no fake dialing).
+/// Call history: real records from GET /conversations/:id/calls, aggregated
+/// across the caller's conversations. Direction comes from the server's
+/// projected `mine` flag and "answered" from the server's answeredAt — the
+/// client never guesses who called whom, and nothing is synthesised.
+class CallHistoryScreen extends StatefulWidget {
+  const CallHistoryScreen({
+    super.key,
+    required this.calls,
+    required this.conversations,
+  });
+
+  final CallsRepository calls;
+  final ConversationsRepository conversations;
+
+  @override
+  State<CallHistoryScreen> createState() => _CallHistoryScreenState();
+}
+
+class _CallHistoryScreenState extends State<CallHistoryScreen> {
+  List<Map<String, dynamic>> _entries = const [];
+  bool _loading = true;
+  String? _error;
+  String _filter = "all";
+
+  /// Upper bound on per-conversation history fetches: the OPPA API exposes
+  /// call history per conversation, so the screen reads the most recent chats
+  /// and says so rather than pretending to have a global index.
+  static const _maxConversations = 10;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    final convResponse = await widget.conversations.list();
+    if (!mounted) return;
+    if (!convResponse.isSuccess) {
+      setState(() {
+        _loading = false;
+        _error = convResponse.errorCode ?? "Could not load your chats";
+      });
+      return;
+    }
+    final conversations =
+        (((convResponse.body as Map?)?["conversations"] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => e.cast<String, dynamic>())
+            .take(_maxConversations)
+            .toList();
+    final merged = <Map<String, dynamic>>[];
+    for (final c in conversations) {
+      final id = "${c["id"] ?? ""}";
+      if (id.isEmpty) continue;
+      final r = await widget.calls.history(id);
+      final rows =
+          (((r.body as Map?)?["calls"] as List?) ?? const []).whereType<Map>();
+      for (final row in rows) {
+        merged.add({
+          ...row.cast<String, dynamic>(),
+          "conversationTitle": "${c["title"] ?? "Chat"}",
+        });
+      }
+    }
+    merged.sort((a, b) => "${b["startedAt"] ?? b["createdAt"] ?? ""}"
+        .compareTo("${a["startedAt"] ?? a["createdAt"] ?? ""}"));
+    if (!mounted) return;
+    setState(() {
+      _loading = false;
+      _entries = merged;
+    });
+  }
+
+  static bool _answered(Map c) => c["answeredAt"] != null;
+  static bool _outgoing(Map c) => c["mine"] == true;
+  static bool _missed(Map c) =>
+      !_outgoing(c) && !_answered(c) && "${c["status"]}" != "ringing";
+
+  /// "Missed · 15/1 9:40 AM · answered" — every clause is a real field.
+  static String _summary(Map c) {
+    final direction = _missed(c)
+        ? "Missed"
+        : _outgoing(c)
+            ? "Outgoing"
+            : "Incoming";
+    final when = _when("${c["startedAt"] ?? c["createdAt"] ?? ""}");
+    final answered = _answered(c) ? " · answered" : "";
+    return "$direction · $when$answered";
+  }
+
+  static String _when(String? iso) {
+    if (iso == null || iso.isEmpty) return "";
+    final parsed = DateTime.tryParse(iso);
+    if (parsed == null) return "";
+    final local = parsed.toLocal();
+    final hour = local.hour % 12 == 0 ? 12 : local.hour % 12;
+    return "${local.day}/${local.month} $hour:"
+        "${local.minute.toString().padLeft(2, "0")} "
+        "${local.hour < 12 ? "AM" : "PM"}";
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final visible = switch (_filter) {
+      "missed" => _entries.where(_missed).toList(),
+      "outgoing" => _entries.where(_outgoing).toList(),
+      "incoming" =>
+        _entries.where((c) => !_outgoing(c) && !_missed(c)).toList(),
+      _ => _entries,
+    };
+    return Scaffold(
+      appBar: AppBar(title: const Text("Call history")),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final (key, label) in const [
+                    ("all", "All"),
+                    ("missed", "Missed"),
+                    ("outgoing", "Outgoing"),
+                    ("incoming", "Incoming"),
+                  ])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: ChoiceChip(
+                        label: Text(label),
+                        selected: _filter == key,
+                        onSelected: (_) => setState(() => _filter = key),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _load,
+              child: _loading
+                  ? const StateViews.loading()
+                  : _error != null
+                      ? ListView(children: [
+                          const SizedBox(height: 48),
+                          StateViews.error(_error!, onRetry: _load),
+                        ])
+                      : visible.isEmpty
+                          ? ListView(children: [
+                              const SizedBox(height: 96),
+                              StateViews.empty(_filter == "all"
+                                  ? "No calls yet"
+                                  : "No $_filter calls in your recent chats"),
+                            ])
+                          : ListView(
+                              padding: const EdgeInsets.all(16),
+                              children: [
+                                for (final c in visible)
+                                  Card(
+                                    margin:
+                                        const EdgeInsets.only(bottom: 8),
+                                    child: ListTile(
+                                      leading: Icon(
+                                        _missed(c)
+                                            ? Icons.call_missed_outlined
+                                            : _outgoing(c)
+                                                ? Icons.call_made_outlined
+                                                : Icons.call_received_outlined,
+                                        color: _missed(c)
+                                            ? theme.colorScheme.error
+                                            : null,
+                                      ),
+                                      title: Text(
+                                          "${c["conversationTitle"] ?? "Chat"}"),
+                                      subtitle: Text(_summary(c)),
+                                      trailing: Text(
+                                          "${c["kind"] ?? "audio"}",
+                                          style: theme.textTheme.bodySmall),
+                                    ),
+                                  ),
+                              ],
+                            ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+            child: Text(
+              "Built from the calls OPPA recorded in your $_maxConversations "
+              "most recent chats.",
+              style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Call settings. Voice calls ring, answer, decline and hang up for real
+/// today; the media/sound options in the approved art have no server or media
+/// stack behind them in V1, so they are shown locked instead of pretending to
+/// change something.
+class CallSettingsScreen extends StatelessWidget {
+  const CallSettingsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(title: const Text("Call settings")),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.phone_in_talk_outlined),
+                  title: const Text("Voice calls"),
+                  subtitle: const Text(
+                      "Works today: ring, answer, decline and hang up are "
+                      "server-confirmed."),
+                  trailing: Icon(Icons.check_circle,
+                      color: theme.colorScheme.primary),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.volume_off_outlined),
+                  title: const Text("Audio in calls"),
+                  subtitle: const Text(
+                      "Not in this release — OPPA does not transmit call audio "
+                      "yet, so there is no quality to choose."),
+                  trailing: Icon(Icons.lock_outline_rounded,
+                      size: 18,
+                      color:
+                          theme.colorScheme.onSurface.withValues(alpha: 0.45)),
+                ),
+                const Divider(height: 1),
+                const LockedFeatureTile(feature: OppaFeature.videoCalls),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Card(
+            child: Column(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.notifications_active_outlined),
+                  title: const Text("Ringtone"),
+                  subtitle: const Text(
+                      "Your phone's own ringtone is used. Choosing one inside "
+                      "OPPA arrives in a later release."),
+                  trailing: Icon(Icons.lock_outline_rounded,
+                      size: 18,
+                      color:
+                          theme.colorScheme.onSurface.withValues(alpha: 0.45)),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class CallsTabScreen extends StatefulWidget {
   const CallsTabScreen({
     super.key,
@@ -360,7 +633,25 @@ class _CallsTabScreenState extends State<CallsTabScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text("Calls")),
+      appBar: AppBar(
+        title: const Text("Calls"),
+        actions: [
+          IconButton(
+            tooltip: "Call history",
+            icon: const Icon(Icons.history),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => CallHistoryScreen(
+                    calls: widget.calls,
+                    conversations: widget.conversations))),
+          ),
+          IconButton(
+            tooltip: "Call settings",
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => const CallSettingsScreen())),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(

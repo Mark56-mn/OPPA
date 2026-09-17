@@ -511,6 +511,15 @@ class DemoBackend implements ApiClientBase {
     return _myOppaId.isNotEmpty && _myOppaId == id;
   }
 
+  /// The demo peer who is NOT the signed-in user for a conversation — used as
+  /// the caller id of incoming demo calls.
+  String _otherMemberId(String conversationId) {
+    for (final p in _people) {
+      if (conversationId.endsWith(p.id)) return p.id;
+    }
+    return _people.first.id;
+  }
+
   _DemoPerson? _personByOppaId(String oppaId) {
     for (final p in _people) {
       if (p.oppaId == oppaId) return p;
@@ -1003,14 +1012,25 @@ class DemoBackend implements ApiClientBase {
     return withoutSuffix.split("/").last;
   }
 
+  /// Production contract (postgres calls history): callerUserId + the
+  /// server-projected `mine` flag. The old demo-only `outgoing` key is gone so
+  /// the client cannot end up depending on a field production never sends.
   List<Map<String, dynamic>> _callsJson(String conversationId) => [
         for (final c in _calls.where((c) => c.conversationId == conversationId))
           {
             "id": c.id,
             "conversationId": c.conversationId,
+            "callerUserId": c.outgoing ? me.id : _otherMemberId(conversationId),
+            "mine": c.outgoing,
             "kind": c.kind,
             "status": c.status,
-            "outgoing": c.outgoing,
+            "endReason": c.status == "ended"
+                ? (c.outgoing ? "hangup" : "timeout")
+                : null,
+            // answeredAt is the server's answer marker the history screen uses
+            // to separate answered calls from missed ones.
+            "answeredAt": c.status == "ringing" ? null : c.createdAt,
+            "startedAt": c.createdAt,
             "createdAt": c.createdAt,
           },
         // A seeded incoming ringing call so the incoming-call pickup flow can
@@ -1022,9 +1042,13 @@ class DemoBackend implements ApiClientBase {
           {
             "id": "call-seed-incoming",
             "conversationId": conversationId,
+            "callerUserId": _otherMemberId(conversationId),
+            "mine": false,
             "kind": "audio",
             "status": "ringing",
-            "outgoing": false,
+            "endReason": null,
+            "answeredAt": null,
+            "startedAt": DateTime.now().toIso8601String(),
             "createdAt": DateTime.now().toIso8601String(),
           },
       ];
