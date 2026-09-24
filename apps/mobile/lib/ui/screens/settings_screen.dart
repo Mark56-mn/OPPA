@@ -4,6 +4,7 @@ import "../../core/connectivity_service.dart";
 import "../../core/session_store.dart";
 import "../../core/translation_service.dart";
 import "../../data/repositories.dart";
+import "../../design/locked_features.dart";
 import "../../design/oppa_themes.dart";
 import "../widgets/common.dart";
 
@@ -162,17 +163,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Card(
             child: Column(
               children: [
-                for (final t in OppaThemeId.values)
-                  RadioGroup<OppaThemeId>(
-                    groupValue: widget.themeId,
-                    onChanged: (v) {
-                      if (v != null) widget.onThemeChanged(v);
-                    },
-                    child: RadioListTile<OppaThemeId>(
-                      title: Text(oppaTokens[t]!.name),
-                      value: t,
-                    ),
+                RadioGroup<OppaThemeId>(
+                  groupValue: widget.themeId,
+                  onChanged: (v) {
+                    if (v != null) widget.onThemeChanged(v);
+                  },
+                  child: Column(
+                    children: [
+                      for (final t in OppaThemeId.values)
+                        RadioListTile<OppaThemeId>(
+                          title: Text(oppaThemeDisplayNames[t]!),
+                          value: t,
+                        ),
+                    ],
                   ),
+                ),
+                // Visible-but-locked fourth look (honest roadmap surface).
+                const LockedFeatureTile(feature: OppaFeature.dashDark),
               ],
             ),
           ),

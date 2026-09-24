@@ -13,14 +13,16 @@ export class PostgresMessageRepository implements MessageRepository {
   async list(conversationId:string,userId:string,limit:number,before?:string){
     if(!(await this.isMember(conversationId,userId))) throw new Error("FORBIDDEN");
     const r=await requireDb().query(
-      `select id, conversation_id as "conversationId", sender_user_id as "senderUserId",
-              client_message_id as "clientMessageId", message_type as "messageType",
-              body, metadata, created_at as "createdAt", edited_at as "editedAt", deleted_at as "deletedAt"
-       from public.oppa_messages
-       where conversation_id=$1 and deleted_at is null
-         and ($3::timestamptz is null or created_at < $3)
-       order by created_at desc limit $2`,
-      [conversationId, Math.min(Math.max(limit,1),100), before ?? null]);
+      `select m.id, m.conversation_id as "conversationId", m.sender_user_id as "senderUserId",
+              m.client_message_id as "clientMessageId", m.message_type as "messageType",
+              m.body, m.metadata, m.created_at as "createdAt", m.edited_at as "editedAt", m.deleted_at as "deletedAt",
+              exists(select 1 from public.oppa_message_receipts rc
+                     where rc.message_id=m.id and rc.user_id <> $4 and rc.read_at is not null) as "readByAny"
+       from public.oppa_messages m
+       where m.conversation_id=$1 and m.deleted_at is null
+         and ($3::timestamptz is null or m.created_at < $3)
+       order by m.created_at desc limit $2`,
+      [conversationId, Math.min(Math.max(limit,1),100), before ?? null, userId]);
     return r.rows;
   }
   async send(conversationId:string,userId:string,input:{body?:string;messageType?:string;metadata?:Record<string,unknown>;clientMessageId?:string}){

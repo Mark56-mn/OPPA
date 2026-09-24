@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OPPA Pulse launch splash: brand-dark background with the centered
+     OPPA PULSE mark (rendered by tools/generate_oppa_icons.py — the same
+     mark as the in-app vector brand kit and the launcher icon). -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/oppa_launch_bg" />
+    <item
+        android:gravity="center"
+        android:drawable="@drawable/oppa_launch" />
+</layer-list>

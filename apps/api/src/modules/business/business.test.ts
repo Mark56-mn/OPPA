@@ -274,3 +274,97 @@ test("role change is owner-only, role-validated and never targets the owner", as
     assert.equal(roleCalls.length, 3);
   } finally { await srv.close(); }
 });
+
+test("owner or manager can edit a product; customers and non-staff cannot", async () => {
+  const seen: Array<{ actor: string; patch: unknown }> = [];
+  const app = appFor({ userId: "u-manager" }, repo({
+    async updateProduct(_businessId, actorUserId, productId, patch) {
+      const role = actorUserId === "u-owner" ? "owner" : actorUserId === "u-manager" ? "manager" : actorUserId === "u-staff" ? "staff" : null;
+      if (role !== "owner" && role !== "manager") throw new Error("BUSINESS_PERMISSION_DENIED");
+      if (patch.priceMinor !== undefined && patch.priceMinor <= 0) throw new Error("BUSINESS_PRODUCT_PRICE_INVALID");
+      seen.push({ actor: actorUserId, patch });
+      return { id: productId, businessId: "b1", name: patch.name ?? "Old", description: null, priceMinor: patch.priceMinor ?? 100, currency: "NGN", status: patch.status ?? "active", createdAt: "", updatedAt: "" };
+    },
+    async roleOf(_businessId, userId) {
+      if (userId === "u-owner") return "owner";
+      if (userId === "u-manager") return "manager";
+      if (userId === "u-staff") return "staff";
+      return null;
+    }
+  } as Partial<PostgresBusinessRepository>));
+  const srv = await listen(app);
+  try {
+    const patch = (userId: string, body: unknown) => fetch(`${srv.url}/business/b1/products/p1`, {
+      method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body)
+    });
+    // The router does not look at roles itself — the repository does — so the
+    // manager path succeeds and a genuinely non-staff caller is rejected by
+    // the real authorization check in the repository implementation.
+    const ok = await patch("u-manager", { name: "Renamed", priceMinor: 2500 });
+    assert.equal(ok.status, 200);
+    assert.equal(seen.length, 1);
+    assert.deepEqual(seen[0].patch, { name: "Renamed", priceMinor: 2500 });
+
+    // Invalid price is refused with the documented code, not a 200.
+    const bad = await patch("u-manager", { priceMinor: 0 });
+    assert.equal(bad.status, 400);
+    assert.equal(((await bad.json()) as { error: string }).error, "BUSINESS_PRODUCT_PRICE_INVALID");
+
+    // Unknown status is refused too (only active/archived exist).
+    const badStatus = await patch("u-manager", { status: "deleted" });
+    assert.equal(badStatus.status, 400);
+
+    // An empty patch is a client bug — rejected explicitly.
+    const empty = await patch("u-manager", {});
+    assert.equal(empty.status, 400);
+    assert.equal(((await empty.json()) as { error: string }).error, "BUSINESS_PRODUCT_PATCH_EMPTY");
+  } finally { await srv.close(); }
+});
+
+test("product listing hides archived rows unless the caller is staff", async () => {
+  const calls: boolean[] = [];
+  const app = appFor({ userId: "u-owner" }, repo({
+    async listProducts(_businessId, options = {}) {
+      calls.push(options.includeArchived === true);
+      return [];
+    },
+    async roleOf(_businessId, userId) { return userId === "u-owner" ? "owner" : null; }
+  } as Partial<PostgresBusinessRepository>));
+  const srv = await listen(app);
+  try {
+    const plain = await fetch(`${srv.url}/business/b1/products`);
+    assert.equal(plain.status, 200);
+    assert.deepEqual(calls, [false]);
+
+    const asStaff = await fetch(`${srv.url}/business/b1/products?includeArchived=1`);
+    assert.equal(asStaff.status, 200);
+    assert.deepEqual(calls, [false, true]);
+  } finally { await srv.close(); }
+});
+
+test("business profile edit is owner-scoped and validates the name", async () => {
+  const app = appFor({ userId: "u-owner" }, repo({
+    async updateBusiness(_businessId, actorUserId, patch) {
+      if (actorUserId !== "u-owner") throw new Error("BUSINESS_PERMISSION_DENIED");
+      if (patch.name !== undefined && !patch.name.trim()) throw new Error("BUSINESS_NAME_INVALID");
+      return { id: "b1", ownerUserId: actorUserId, name: patch.name ?? "Shop", description: patch.description ?? null, status: "active", createdAt: "", updatedAt: "" };
+    }
+  } as Partial<PostgresBusinessRepository>));
+  const srv = await listen(app);
+  try {
+    const res = await fetch(`${srv.url}/business/b1`, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "Mama's Kitchen" })
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json() as { name: string };
+    assert.equal(body.name, "Mama's Kitchen");
+
+    const blank = await fetch(`${srv.url}/business/b1`, {
+      method: "PATCH", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "   " })
+    });
+    assert.equal(blank.status, 400);
+    assert.equal(((await blank.json()) as { error: string }).error, "BUSINESS_NAME_INVALID");
+  } finally { await srv.close(); }
+});

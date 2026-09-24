@@ -3,6 +3,7 @@ import "package:flutter/material.dart";
 import "../../core/translation_service.dart";
 import "../../core/voice_service.dart";
 import "../../data/repositories.dart";
+import "../../design/oppa_brand.dart";
 
 /// OPPA Translator — voice-first translation for market women and
 /// non-literate users. Flow (matches the approved UI):
@@ -14,10 +15,15 @@ class TranslatorScreen extends StatefulWidget {
   const TranslatorScreen({
     super.key,
     required this.messages,
+    this.conversations,
     this.initialText,
   });
 
   final MessagesRepository messages;
+
+  /// Real conversation list powering the "send to chat" picker. Optional: when
+  /// absent the screen says so rather than pretending to have destinations.
+  final ConversationsRepository? conversations;
   final String? initialText;
 
   @override
@@ -38,12 +44,16 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
   String _toCode = "en";
   bool _listening = false;
   bool _autoSpeak = true;
+  bool _voiceMode = true;
   String? _voiceError;
 
   @override
   void initState() {
     super.initState();
-    _voice.ensureReady();
+    _voice.ensureReady().then((_) {
+      if (!mounted) return;
+      setState(() {}); // re-render with honest availability
+    });
     if (widget.initialText != null && widget.initialText!.isNotEmpty) {
       _textController.text = widget.initialText!;
       WidgetsBinding.instance.addPostFrameCallback((_) => _translate());
@@ -64,9 +74,13 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
       if (mounted) setState(() => _listening = false);
       return;
     }
-    final locale = voiceLocales[_fromCode == "auto" ? "en" : _fromCode] ?? "en-US";
+    final requestedLocale =
+        voiceLocales[_fromCode == "auto" ? "en" : _fromCode] ?? "en-US";
+    // resolveLocale downgrades to the device default when the language pack
+    // is not installed; the note below says so honestly instead of failing.
+    final locale = await _voice.resolveLocale(requestedLocale);
     final started = await _voice.startListening(
-      localeId: locale,
+      localeId: locale ?? requestedLocale,
       timeout: const Duration(seconds: 8),
       onPartial: (text) {
         if (mounted) {
@@ -89,14 +103,24 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
     if (started) {
       setState(() {
         _listening = true;
-        _voiceError = null;
+        _voiceError = locale == null && requestedLocale != "en-US"
+            ? "No $requestedLocale voice installed — listening in the device default language"
+            : null;
       });
     } else {
-      setState(() => _voiceError = _voice.sttAvailability == VoiceAvailability.unavailable
-          ? "Voice input is not available on this device"
-          : "Could not start listening — try again");
+      setState(() => _voiceError = _voiceBlockMessage());
     }
   }
+
+  /// Honest, plain-language reason dictation is unavailable right now.
+  String _voiceBlockMessage() => switch (_voice.sttBlockReason) {
+        SttBlockReason.permissionDenied =>
+          "Microphone permission is off — allow it in Settings to speak",
+        SttBlockReason.noSpeechService =>
+          "This device has no speech service — typing works everywhere",
+        SttBlockReason.busy => "Still finishing the last listen — try again in a second",
+        _ => "Could not start listening — try again",
+      };
 
   void _translate() {
     final text = _textController.text.trim();
@@ -145,33 +169,69 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
             : (response?.errorCode ?? "Could not send — check your connection"))));
   }
 
-  Future<String?> _promptConversationId() {
-    final controller = TextEditingController();
-    return showDialog<String>(
+  /// Real destination picker: the user's actual conversations from the server,
+  /// chosen by name. A raw conversation-id text box is not something an OPPA
+  /// user should ever have to see.
+  Future<String?> _promptConversationId() async {
+    final repo = widget.conversations;
+    if (repo == null) {
+      _snack("Chats are unavailable in this workspace — nothing was sent");
+      return null;
+    }
+    final r = await repo.list();
+    if (!mounted) return null;
+    final all = (((r.body is Map ? (r.body as Map)["conversations"] : null)
+                as List?) ??
+            const [])
+        .whereType<Map>()
+        .map((e) => e.cast<String, dynamic>())
+        .toList();
+    if (!r.isSuccess) {
+      _snack(r.errorCode ?? "Could not load your chats");
+      return null;
+    }
+    if (all.isEmpty) {
+      _snack("You have no chats yet — start one from Chats first");
+      return null;
+    }
+    return showModalBottomSheet<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Send to chat"),
-        content: TextField(
-          controller: controller,
-          maxLength: 64,
-          decoration: const InputDecoration(
-              labelText: "Conversation id",
-              helperText: "Find it under Chats"),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+              child: Text("Send to chat",
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700)),
+            ),
+            for (final c in all)
+              ListTile(
+                leading: Icon("${c["kind"] ?? ""}" == "group"
+                    ? Icons.groups_outlined
+                    : Icons.person_outline),
+                title: Text("${c["title"] ?? "Chat"}"),
+                subtitle: Text(
+                    "${c["kind"] ?? "direct"} · ${c["unreadCount"] ?? 0} unread"),
+                onTap: () => Navigator.pop(context, "${c["id"] ?? ""}"),
+              ),
+          ],
         ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Cancel")),
-          FilledButton(
-              onPressed: () {
-                final v = controller.text.trim();
-                if (v.isEmpty) return;
-                Navigator.pop(context, v);
-              },
-              child: const Text("Send")),
-        ],
       ),
     );
+  }
+
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   @override
@@ -193,6 +253,43 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            // Brand header (approved art: orb + "Speak · Translate · Connect").
+            Row(
+              children: [
+                const CustomPaint(
+                    size: Size.square(40), painter: OppaPulsePainter()),
+                const SizedBox(width: 10),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("OPPA Translator",
+                        style: theme.textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700)),
+                    Text("Speak · Translate · Connect",
+                        style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurface
+                                .withValues(alpha: 0.6))),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            // Speak / Type entry mode (approved UI).
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(
+                    value: true,
+                    icon: Icon(Icons.mic_rounded),
+                    label: Text("Speak")),
+                ButtonSegment(
+                    value: false,
+                    icon: Icon(Icons.keyboard_alt_outlined),
+                    label: Text("Type")),
+              ],
+              selected: {_voiceMode},
+              onSelectionChanged: (s) => setState(() => _voiceMode = s.first),
+            ),
+            const SizedBox(height: 12),
             // Language pickers
             Card(
               child: Padding(
@@ -257,10 +354,13 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
                         ),
                         const Spacer(),
                         if (_listening)
-                          const SizedBox(
-                              width: 16,
-                              height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2)),
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: theme.colorScheme.primary),
+                          ),
                       ],
                     ),
                     TextField(
@@ -277,15 +377,20 @@ class _TranslatorScreenState extends State<TranslatorScreen> {
                     ),
                     Row(
                       children: [
-                        FilledButton.icon(
-                          onPressed: _voice.canListen || _listening
-                              ? _toggleListen
-                              : null,
-                          icon: Icon(_listening
-                              ? Icons.stop
-                              : Icons.mic_rounded),
-                          label: Text(_listening ? "Stop" : "Speak"),
-                        ),
+                        if (_voiceMode)
+                          FilledButton.icon(
+                            // canListen is false while a session is active or
+                            // when the device lacks the capability; in both
+                            // cases the honest reason is shown below.
+                            onPressed:
+                                _listening || _voice.canListen
+                                    ? _toggleListen
+                                    : null,
+                            icon: Icon(_listening
+                                ? Icons.stop
+                                : Icons.mic_rounded),
+                            label: Text(_listening ? "Stop" : "Speak"),
+                          ),
                         const Spacer(),
                         FilledButton.tonal(
                           onPressed: _translate,

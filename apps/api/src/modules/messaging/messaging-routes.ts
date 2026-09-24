@@ -10,13 +10,22 @@ export function createMessagingRouter(messages: MessageRepository) {
       const conversationId = String(req.params.conversationId);
       const limit = Number(req.query.limit ?? 50);
       const before = typeof req.query.before === "string" ? req.query.before : undefined;
+      const list = await messages.list(
+        conversationId,
+        req.auth!.userId,
+        Number.isFinite(limit) ? limit : 50,
+        before
+      );
+      // Project ownership per caller (the mobile UI aligns bubbles with it);
+      // never leaks other members' identity beyond the sender id itself.
+      // readByAny: at least one OTHER member has read the message — drives the
+      // honest read-receipt tick on the sender's own bubbles.
       res.json({
-        messages: await messages.list(
-          conversationId,
-          req.auth!.userId,
-          Number.isFinite(limit) ? limit : 50,
-          before
-        )
+        messages: list.map((m) => ({
+          ...m,
+          mine: m.senderUserId === req.auth!.userId,
+          readByAny: Boolean((m as { readByAny?: boolean }).readByAny)
+        }))
       });
     } catch (e) {
       next(e);

@@ -4,6 +4,8 @@ import "../../core/connectivity_service.dart";
 import "../../core/screen_data.dart";
 import "../../core/session_store.dart";
 import "../../data/repositories.dart";
+import "../../design/oppa_brand.dart";
+import "../../design/oppa_components.dart";
 import "../widgets/common.dart";
 
 /// Home: balance snapshot, recent notifications and quick actions.
@@ -93,81 +95,91 @@ class _HomeScreenState extends State<HomeScreen> {
         ? ((_notificationsState as ViewReady<Map>).data["unread"] as int? ?? 0)
         : 0;
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("OPPA"),
-        actions: [
-          // Workspace switcher: Personal ↔ Business without logout.
-          IconButton(
-            tooltip: "Switch workspace",
-            onPressed: widget.onOpenWorkspaceSwitcher,
-            icon: const Icon(Icons.swap_horiz_outlined),
+      body: SafeArea(
+        bottom: false,
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+            children: [
+              // Branded header: the Pulse orb beside the wordmark, with the
+              // workspace switcher and notification bell on the right — the
+              // composition used across the approved home/chat screens.
+              Row(
+                children: [
+                  const OppaBrandOrb(size: 34),
+                  const SizedBox(width: OppaSpace.sm),
+                  Text.rich(
+                    TextSpan(
+                      text: OppaBrand.wordmark,
+                      style: theme.textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 3,
+                      ),
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: "Switch workspace",
+                    onPressed: widget.onOpenWorkspaceSwitcher,
+                    icon: const Icon(Icons.swap_horiz_outlined),
+                  ),
+                  IconButton(
+                    tooltip: "Notifications",
+                    onPressed: widget.onOpenNotifications,
+                    icon: Badge(
+                      isLabelVisible: unreadBadge > 0,
+                      label: Text("$unreadBadge"),
+                      child: const Icon(Icons.notifications_outlined),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: OppaSpace.lg),
+              _BalanceCard(state: _walletState, onRetry: _load),
+              const SizedBox(height: OppaSpace.md),
+              _QuickActions(
+                onTranslator: widget.onOpenTranslator,
+                onConnect: _openConnect,
+                onSupport: () => Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const SupportScreen())),
+                onSettings: widget.onOpenSettings,
+              ),
+              const SizedBox(height: OppaSpace.lg),
+              const OppaSectionTitle("Recent activity"),
+              _NotificationPreview(state: _notificationsState),
+            ],
           ),
-          IconButton(
-            onPressed: widget.onOpenNotifications,
-            icon: Badge(
-              isLabelVisible: unreadBadge > 0,
-              label: Text("$unreadBadge"),
-              child: const Icon(Icons.notifications_outlined),
-            ),
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            _BalanceCard(state: _walletState, onRetry: _load),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.tonalIcon(
-                    onPressed: widget.onOpenTranslator,
-                    icon: const Icon(Icons.translate_outlined),
-                    label: const Text("Translator"),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.tonalIcon(
-                    onPressed: widget.onOpenSettings,
-                    icon: const Icon(Icons.settings_outlined),
-                    label: const Text("Settings"),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: FilledButton.tonalIcon(
-                    onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                        builder: (_) => const SupportScreen())),
-                    icon: const Icon(Icons.support_agent_outlined),
-                    label: const Text("Support"),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.tonalIcon(
-                    onPressed: _openConnect,
-                    icon: const Icon(Icons.person_add_alt_outlined),
-                    label: const Text("Connect"),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 24),
-            Text("Recent activity", style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            _NotificationPreview(state: _notificationsState),
-          ],
         ),
       ),
     );
   }
+}
+
+/// The 2x2 quick-action grid on Home. Every tile maps to a real destination —
+/// there are no placeholder actions.
+class _QuickActions extends StatelessWidget {
+  const _QuickActions({
+    required this.onTranslator,
+    required this.onConnect,
+    required this.onSupport,
+    required this.onSettings,
+  });
+
+  final VoidCallback onTranslator;
+  final VoidCallback onConnect;
+  final VoidCallback onSupport;
+  final VoidCallback onSettings;
+
+  @override
+  Widget build(BuildContext context) => OppaQuickActions(
+        items: [
+          (icon: Icons.translate_outlined, label: "Translator", onTap: onTranslator),
+          (icon: Icons.person_add_alt_outlined, label: "Connect", onTap: onConnect),
+          (icon: Icons.support_agent_outlined, label: "Support", onTap: onSupport),
+          (icon: Icons.settings_outlined, label: "Settings", onTap: onSettings),
+        ],
+      );
 }
 
 class _BalanceCard extends StatelessWidget {
@@ -178,38 +190,56 @@ class _BalanceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: switch (state) {
-          ViewLoading() => const Center(child: CircularProgressIndicator()),
-          ViewOffline() => const Column(children: [
-              Icon(Icons.cloud_off),
-              SizedBox(height: 8),
-              Text("Wallet unavailable offline"),
-            ]),
-          ViewError(:final message) => Column(children: [
-              Text(message),
-              const SizedBox(height: 8),
-              FilledButton(onPressed: onRetry, child: const Text("Retry")),
-            ]),
-          ViewReady<Map>(:final data) => Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("Wallet balance",
-                    style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6))),
-                const SizedBox(height: 4),
-                Text(
-                  "₦ ${_formatMinor((data["balanceMinor"] as num?)?.toInt() ?? 0)}",
-                  style: theme.textTheme.headlineMedium
-                      ?.copyWith(fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-          _ => const SizedBox.shrink(),
-        },
-      ),
+    final t = context.tokens;
+    return OppaCard(
+      elevated: true,
+      child: switch (state) {
+        ViewLoading() => const SizedBox(
+            height: 72,
+            child: Center(child: CircularProgressIndicator(strokeWidth: 2.5))),
+        ViewOffline() => const OppaStatePanel(
+            icon: Icons.cloud_off,
+            title: "Wallet unavailable offline",
+            message: "Reconnect to see your real balance. "
+                "Nothing here is a saved figure pretending to be live.",
+            tone: OppaTone.warning,
+          ),
+        ViewError(:final message) => OppaStatePanel(
+            icon: Icons.error_outline,
+            title: "Could not load your balance",
+            message: message,
+            actionLabel: "Retry",
+            onAction: onRetry,
+            tone: OppaTone.danger,
+          ),
+        ViewReady<Map>(:final data) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text("Wallet balance",
+                      style: theme.textTheme.bodySmall?.copyWith(
+                          color:
+                              t.onSurface.withValues(alpha: 0.6))),
+                  const Spacer(),
+                  if (data["fromCache"] == true)
+                    const OppaStatusPill(
+                      label: "Last known",
+                      tone: OppaTone.warning,
+                      icon: Icons.history,
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                "₦ ${_formatMinor((data["balanceMinor"] as num?)?.toInt() ?? 0)}",
+                style: theme.textTheme.headlineMedium?.copyWith(
+                    fontWeight: FontWeight.w800, color: t.onSurface),
+              ),
+            ],
+          ),
+        _ => const SizedBox.shrink(),
+      },
     );
   }
 

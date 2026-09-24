@@ -1,0 +1,111 @@
+# Codemagic configuration for OPPA mobile (apps/mobile).
+#
+# The android/ platform folder IS COMMITTED (manifest permissions included),
+# so both workflows build directly from the checkout — no scaffolding step.
+# If a build ever fails with "failed to read android/app/build.gradle", the
+# platform folder was deleted from the branch: restore it (scripts/
+# prepare_android.sh regenerates it) rather than scaffolding mid-build.
+#
+# Workflows:
+#   oppa-mobile-demo    — DEBUG APK with compile-time demo mode enabled for
+#                         physical UI/UX testing without production OTP
+#                         credentials. Never ships: demo mode is refused at
+#                         startup in product builds (apps/mobile/lib/app.dart).
+#   oppa-mobile-release — RELEASE APK with NO demo defines. Runs the Flutter
+#                         test suite first, including the compile-time tripwire
+#                         tests that assert demo mode defaults to OFF.
+#
+# Safety notes:
+# - The release workflow must never gain OPPA_DEMO_MODE=true.
+# - No secrets are required for the demo workflow.
+# - Release signing: add the `:android-signing` group in Codemagic (keystore +
+#   aliases) when store distribution begins; app-store connect credentials are
+#   intentionally absent.
+
+workflows:
+  oppa-mobile-demo:
+    name: OPPA Mobile — Demo (debug APK)
+    max_build_duration: 30
+    environment:
+      # Pinned to the exact Flutter version the committed android/ platform was
+      # scaffolded with (the first Codemagic run failed because `stable` moved
+      # ahead of the committed Gradle wrapper). To upgrade Flutter: bump this
+      # pin AND gradle-wrapper.properties together, then re-run this workflow.
+      flutter: 3.35.3
+      groups:
+        - oppa_common
+      vars:
+        # Ignored by demo builds (no network); kept for log clarity.
+        OPPA_API_URL: "https://unset.invalid"
+    scripts:
+      - name: Flutter doctor
+        script: flutter doctor -v
+      - name: Verify Android platform is committed
+        script: |
+          test -f apps/mobile/android/app/build.gradle.kts \
+            || { echo "apps/mobile/android is MISSING from this branch." \
+                   "It is a committed platform folder; restore it (see" \
+                   "scripts/prepare_android.sh) instead of scaffolding mid-build." >&2; \
+                 exit 1; }
+          echo "Android platform present."
+      - name: Get packages
+        script: cd apps/mobile && flutter pub get
+      - name: Brand-asset guard (OPPA launcher/splash, not Flutter)
+        script: python3 tools/check_brand_assets.py
+      - name: Analyze
+        script: cd apps/mobile && flutter analyze --no-fatal-infos
+      - name: Unit tests
+        script: cd apps/mobile && flutter test
+      - name: Verify demo define reaches compiled code
+        script: cd apps/mobile && flutter test --dart-define=OPPA_DEMO_MODE=true test/demo_mode_test.dart
+      - name: Build demo debug APK
+        script: |
+          cd apps/mobile
+          flutter build apk --debug \
+            --dart-define=OPPA_DEMO_MODE=true
+    artifacts:
+      - apps/mobile/build/app/outputs/flutter-apk/*.apk
+    publishing:
+      email:
+        recipients:
+          - build-reports@oppa.example
+
+  oppa-mobile-release:
+    name: OPPA Mobile — Release (no demo mode)
+    max_build_duration: 45
+    environment:
+      # Same pin rationale as oppa-mobile-demo above.
+      flutter: 3.35.3
+      groups:
+        - oppa_common
+        # Uncomment once signing credentials are provisioned in Codemagic:
+        # - :android-signing
+    scripts:
+      - name: Flutter doctor
+        script: flutter doctor -v
+      - name: Verify Android platform is committed
+        script: |
+          test -f apps/mobile/android/app/build.gradle.kts \
+            || { echo "apps/mobile/android is MISSING from this branch." \
+                   "It is a committed platform folder; restore it (see" \
+                   "scripts/prepare_android.sh) instead of scaffolding mid-build." >&2; \
+                 exit 1; }
+          echo "Android platform present."
+      - name: Get packages
+        script: cd apps/mobile && flutter pub get
+      - name: Brand-asset guard (OPPA launcher/splash, not Flutter)
+        script: python3 tools/check_brand_assets.py
+      - name: Analyze
+        script: cd apps/mobile && flutter analyze --no-fatal-infos
+      - name: Unit tests (asserts demo mode is compile-time OFF)
+        script: cd apps/mobile && flutter test
+      - name: Build release APK (no demo defines)
+        script: |
+          cd apps/mobile
+          flutter build apk --release
+    artifacts:
+      - apps/mobile/build/app/outputs/flutter-apk/*.apk
+    publishing:
+      email:
+        recipients:
+          - build-reports@oppa.example

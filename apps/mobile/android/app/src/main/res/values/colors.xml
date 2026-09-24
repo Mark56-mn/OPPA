@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OPPA Pulse brand colors (launch splash background = Pulse near-black). -->
+<resources>
+    <color name="oppa_launch_bg">#0B0213</color>
+</resources>

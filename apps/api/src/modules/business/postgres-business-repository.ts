@@ -207,17 +207,100 @@ export class PostgresBusinessRepository {
     return r.rows[0];
   }
 
-  async listProducts(businessId: string): Promise<Array<Record<string, unknown>>> {
+  /**
+   * Products of a business. Customers only ever see `active` rows; the
+   * business's own staff additionally see archived ones so they can restore
+   * them (the caller decides — never the client alone).
+   */
+  async listProducts(businessId: string, options: { includeArchived?: boolean } = {}): Promise<Array<Record<string, unknown>>> {
     const r = await requireDb().query(
       `select id, business_id as "businessId", name, description,
               price_minor as "priceMinor", currency, status,
               created_at as "createdAt", updated_at as "updatedAt"
        from public.oppa_business_products
-       where business_id=$1 and status='active'
+       where business_id=$1 and ($2::boolean or status='active')
        order by created_at desc limit 200`,
-      [businessId]
+      [businessId, options.includeArchived === true]
     );
     return r.rows;
+  }
+
+  /**
+   * Owner/manager product edit. Price and name are validated with the same
+   * rules as creation, and the change is scoped to the business that owns the
+   * product — a staff member of business A can never touch business B's row.
+   * `status` is limited to the two product states the schema supports.
+   */
+  async updateProduct(businessId: string, actorUserId: string, productId: string, patch: {
+    name?: string; description?: string | null; priceMinor?: number; status?: "active" | "archived";
+  }): Promise<Record<string, unknown>> {
+    const role = await this.roleOf(businessId, actorUserId);
+    if (role !== "owner" && role !== "manager") throw new Error("BUSINESS_PERMISSION_DENIED");
+    if (patch.name !== undefined && (!patch.name.trim() || patch.name.length > 120)) {
+      throw new Error("BUSINESS_PRODUCT_NAME_INVALID");
+    }
+    if (patch.priceMinor !== undefined &&
+        (!Number.isSafeInteger(patch.priceMinor) || patch.priceMinor <= 0)) {
+      throw new Error("BUSINESS_PRODUCT_PRICE_INVALID");
+    }
+    if (patch.description !== undefined && patch.description !== null && patch.description.length > 1000) {
+      throw new Error("BUSINESS_DESCRIPTION_INVALID");
+    }
+    if (patch.status !== undefined && patch.status !== "active" && patch.status !== "archived") {
+      throw new Error("BUSINESS_PRODUCT_STATUS_INVALID");
+    }
+    const r = await requireDb().query(
+      `update public.oppa_business_products set
+         name = coalesce($3, name),
+         description = case when $4::boolean then $5 else description end,
+         price_minor = coalesce($6, price_minor),
+         status = coalesce($7, status),
+         updated_at = now()
+       where id=$1 and business_id=$2
+       returning id, business_id as "businessId", name, description,
+                 price_minor as "priceMinor", currency, status,
+                 created_at as "createdAt", updated_at as "updatedAt"`,
+      [productId, businessId,
+       patch.name === undefined ? null : patch.name.trim(),
+       patch.description !== undefined,
+       patch.description ?? null,
+       patch.priceMinor ?? null,
+       patch.status ?? null]
+    );
+    if (!r.rows[0]) throw new Error("BUSINESS_PRODUCT_NOT_FOUND");
+    return r.rows[0];
+  }
+
+  /**
+   * Business profile edit (name/description). Owner-only: managers run the
+   * store day to day but cannot rename the business itself.
+   */
+  async updateBusiness(businessId: string, actorUserId: string, patch: {
+    name?: string; description?: string | null;
+  }): Promise<BusinessRecord> {
+    const role = await this.roleOf(businessId, actorUserId);
+    if (role !== "owner") throw new Error("BUSINESS_PERMISSION_DENIED");
+    if (patch.name !== undefined && (!patch.name.trim() || patch.name.length > 120)) {
+      throw new Error("BUSINESS_NAME_INVALID");
+    }
+    if (patch.description !== undefined && patch.description !== null && patch.description.length > 1000) {
+      throw new Error("BUSINESS_DESCRIPTION_INVALID");
+    }
+    const r = await requireDb().query(
+      `update public.oppa_businesses set
+         name = coalesce($3, name),
+         description = case when $4::boolean then $5 else description end,
+         updated_at = now()
+       where id=$1 and owner_user_id=$2
+       returning id, owner_user_id as "ownerUserId", name, description, status,
+                 created_at as "createdAt", updated_at as "updatedAt"`,
+      [businessId, actorUserId,
+       patch.name === undefined ? null : patch.name.trim(),
+       patch.description !== undefined,
+       patch.description ?? null]
+    );
+    if (!r.rows[0]) throw new Error("BUSINESS_NOT_FOUND");
+    return r.rows[0] as BusinessRecord;
   }
 
   /**

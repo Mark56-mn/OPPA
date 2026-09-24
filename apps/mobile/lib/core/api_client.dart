@@ -4,8 +4,11 @@ import "dart:math";
 
 import "package:http/http.dart" as http;
 
-/// Result of a single API attempt, classified for retry logic.
-enum AttemptKind { success, clientError, serverError, networkError, timeout }
+import "api_client_base.dart";
+
+// Re-export the shared response types so existing imports of this file keep
+// working after they moved to api_client_base.dart (no circular imports).
+export "api_client_base.dart" show AttemptKind, ApiResponse;
 
 /// Retry safety classification for mutations.
 ///
@@ -46,23 +49,6 @@ RetrySafety _retrySafety(String method, String path) {
   return RetrySafety.unsafe;
 }
 
-class ApiResponse {
-  final AttemptKind kind;
-  final int? statusCode;
-  final dynamic body;
-  final String? errorCode;
-  ApiResponse({required this.kind, this.statusCode, this.body, this.errorCode});
-
-  bool get isSuccess => kind == AttemptKind.success;
-  bool get isAuthError => errorCode == "OTP_INVALID_OR_EXPIRED" ||
-      errorCode == "REFRESH_TOKEN_INVALID" ||
-      statusCode == 401;
-  bool get isRetryable =>
-      kind == AttemptKind.networkError ||
-      kind == AttemptKind.timeout ||
-      kind == AttemptKind.serverError;
-}
-
 /// Real HTTP client for the OPPA API.
 ///
 /// Africa-first network behavior:
@@ -75,7 +61,7 @@ class ApiResponse {
 ///   state with a safe read first;
 /// - exponential backoff with jitter: 1s, 2s, 4s (+/- 30%) capped at 15s;
 /// - compact JSON bodies; no polling loops inside the client itself.
-class ApiClient {
+class ApiClient implements ApiClientBase {
   ApiClient({
     required this.baseUrl,
     http.Client? client,
@@ -100,18 +86,23 @@ class ApiClient {
 
   static const v1Prefix = "/v1";
 
+  @override
   Future<ApiResponse> get(String path, {Map<String, String>? query}) =>
       _send("GET", path, query: query);
 
+  @override
   Future<ApiResponse> post(String path, {Object? body}) =>
       _send("POST", path, body: body);
 
+  @override
   Future<ApiResponse> patch(String path, {Object? body}) =>
       _send("PATCH", path, body: body);
 
+  @override
   Future<ApiResponse> put(String path, {Object? body}) =>
       _send("PUT", path, body: body);
 
+  @override
   Future<ApiResponse> delete(String path) => _send("DELETE", path);
 
   Future<ApiResponse> _send(

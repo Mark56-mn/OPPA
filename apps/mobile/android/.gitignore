@@ -1,0 +1,14 @@
+# The Gradle wrapper IS committed: CI (Codemagic) checks out a fresh clone
+# and must build with the exact pinned Gradle version, and uploaded files can
+# lose their executable bit on some hosts — committing keeps builds reproducible.
+/.gradle
+/captures/
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+
+# Remember to never publicly share your keystore.
+# See https://flutter.dev/to/reference-keystore
+key.properties
+**/*.keystore
+**/*.jks

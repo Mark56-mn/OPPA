@@ -71,13 +71,20 @@ export function createCallsRouter(calls: CallsService) {
     try {
       const limit = Number(req.query.limit ?? 25);
       const before = typeof req.query.before === "string" ? req.query.before : undefined;
+      const history = await calls.history(
+        String(req.params.conversationId),
+        req.auth!.userId,
+        Number.isFinite(limit) ? limit : 25,
+        before
+      );
+      // Project ownership per caller (same pattern as message history) so the
+      // client can label Incoming vs Outgoing without guessing: the server
+      // decides who placed the call, the client never infers it.
       res.json({
-        calls: await calls.history(
-          String(req.params.conversationId),
-          req.auth!.userId,
-          Number.isFinite(limit) ? limit : 25,
-          before
-        )
+        calls: history.map((c) => ({
+          ...c,
+          mine: c.callerUserId === req.auth!.userId
+        }))
       });
     } catch (e) {
       next(e);

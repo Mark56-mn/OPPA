@@ -146,3 +146,25 @@ test("delete returns 404 when the message is not owned by the caller", async () 
     assert.equal(ok.status, 204);
   } finally { await srv.close(); }
 });
+
+test("message history projects ownership per caller (mine flag)", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const app = appFor(conversationRepo(calls), messageRepo(calls, {
+    async list(conversationId, userId, limit, before) {
+      calls.push({ list: { conversationId, userId, limit, before } });
+      return [
+        message({ id: "m-from-other", senderUserId: "u2" }),
+        message({ id: "m-from-me", senderUserId: "u1" })
+      ];
+    }
+  }));
+  const srv = await listen(app);
+  try {
+    const res = await fetch(`${srv.url}/conversations/c1/messages`, { method: "GET" });
+    assert.equal(res.status, 200);
+    const body = await res.json() as { messages: Array<{ id: string; mine: boolean }> };
+    const byId = Object.fromEntries(body.messages.map((m) => [m.id, m.mine]));
+    assert.equal(byId["m-from-other"], false); // Someone else's message.
+    assert.equal(byId["m-from-me"], true);     // The caller's own message.
+  } finally { await srv.close(); }
+});
