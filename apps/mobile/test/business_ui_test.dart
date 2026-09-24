@@ -20,6 +20,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.enterText(
         find.widgetWithText(TextField, "6-digit code"), "000000");
+    // Pump so the rebuild that enables Verify is committed before tapping.
+    await tester.pumpAndSettle();
     await tester.tap(find.text("Verify"));
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text("Skip — add it later"));

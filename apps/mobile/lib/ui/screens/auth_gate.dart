@@ -10,6 +10,7 @@ import "../../core/voice_service.dart";
 import "../../data/repositories.dart";
 import "../../design/locked_features.dart";
 import "../../design/oppa_brand.dart";
+import "../../design/oppa_components.dart";
 import "../../design/oppa_themes.dart";
 
 /// Real auth journey, matching the approved onboarding art:
@@ -45,6 +46,41 @@ class AuthGate extends StatefulWidget {
 }
 
 enum _AuthStep { phone, otp, profile, picture, oppaId, look, security, done }
+
+/// Onboarding flow metadata — drives the clean step chrome (back arrow, title
+/// and the numbered progress rail) from the approved reference art.
+extension _AuthStepMeta on _AuthStep {
+  /// Index into the 6-dot progress rail shown from the OTP step onwards.
+  /// The phone step is the branded Welcome screen and carries no rail, so it
+  /// shares the rail position with the number-entry stage.
+  int get railIndex => switch (this) {
+        _AuthStep.phone => 0,
+        _AuthStep.otp => 1,
+        _AuthStep.profile => 2,
+        _AuthStep.picture => 2,
+        _AuthStep.oppaId => 3,
+        _AuthStep.look => 4,
+        _AuthStep.security => 4,
+        _AuthStep.done => 4,
+      };
+
+  /// The step the back arrow returns to. `null` on the first screen.
+  _AuthStep? get previous => switch (this) {
+        _AuthStep.phone => null,
+        _AuthStep.otp => _AuthStep.phone,
+        _AuthStep.profile => _AuthStep.otp,
+        _AuthStep.picture => _AuthStep.profile,
+        _AuthStep.oppaId => _AuthStep.picture,
+        _AuthStep.look => _AuthStep.oppaId,
+        _AuthStep.security => _AuthStep.look,
+        _AuthStep.done => _AuthStep.security,
+      };
+
+  /// Back must not be able to silently discard work: the profile name and the
+  /// claimed OPPA ID are already in their controllers and the server owns the
+  /// claim, so stepping back is always safe here.
+  bool get canGoBack => previous != null;
+}
 
 /// Availability of one candidate handle, as answered by the server.
 enum _HandleState { unknown, checking, available, taken, invalid }
@@ -341,6 +377,16 @@ class _AuthGateState extends State<AuthGate> {
     // The claimed OPPA ID (if any) is already saved server-side.
   }
 
+  /// Steps back one screen. Used by the header back arrow in [OppaStepHeader].
+  void _goBack() {
+    final target = _step.previous;
+    if (target == null) return;
+    setState(() {
+      _step = target;
+      _error = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -389,7 +435,11 @@ class _AuthGateState extends State<AuthGate> {
     );
   }
 
-  /// Big brand header used by the first step (approved welcome art).
+  /// Big brand header used ONLY by the first step (approved welcome art).
+  /// Every later step uses [OppaStepHeader] — a clean bar with a back arrow,
+  /// the step title and the numbered progress rail, exactly as in the
+  /// reference. Repeating the orb on every screen made onboarding look
+  /// repetitive and pushed the actual form below the fold.
   Widget _brandHeader(ThemeData theme, {required String title, required String body}) =>
       Column(
         children: [
@@ -431,6 +481,28 @@ class _AuthGateState extends State<AuthGate> {
         ],
       );
 
+  /// Clean step chrome for every screen after Welcome.
+  Widget _stepHeader(String title, String subtitle) => OppaStepHeader(
+        title: title,
+        subtitle: subtitle,
+        stepIndex: _step.railIndex,
+        totalSteps: 5,
+        showBack: _step.canGoBack,
+        onBack: _goBack,
+      );
+
+  /// Inline validation for the phone field. Empty is not an error (the user
+  /// has simply not typed yet); anything that cannot be a real number is.
+  String? _phoneError() {
+    final raw = _phoneController.text.trim();
+    if (raw.isEmpty) return null;
+    final digits = raw.replaceAll(RegExp(r'[\s()\-]'), '');
+    if (!RegExp(r'^\+?[0-9]{7,15}$').hasMatch(digits)) {
+      return 'Enter a valid phone number, e.g. +234 801 234 5678';
+    }
+    return null;
+  }
+
   Widget _phoneStep(ThemeData theme, {Key? key}) => Column(
         key: key,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -440,15 +512,24 @@ class _AuthGateState extends State<AuthGate> {
             title: "Welcome to OPPA",
             body: OppaBrand.slogan,
           ),
-          TextField(
+          OppaTextField(
             controller: _phoneController,
             keyboardType: TextInputType.phone,
             autofillHints: const [AutofillHints.telephoneNumber],
-            decoration: const InputDecoration(
-              labelText: "Phone number",
-              hintText: "+234 801 234 5678",
-              prefixIcon: Icon(Icons.phone_outlined),
-            ),
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _sending ? null : _sendOtp(),
+            label: "Phone number",
+            hint: "+234 801 234 5678",
+            prefixIcon: Icons.phone_outlined,
+            // Live validation: a malformed number must not reach the API, and
+            // the field explains why instead of failing silently on Continue.
+            error: _phoneError(),
+            onChanged: (_) {
+              // Rebuild so the Verify button enables the moment the code is
+              // complete. SetState is guarded because the field can emit while
+              // the widget is being disposed by a step change.
+              if (mounted) setState(() {});
+            },
           ),
           const SizedBox(height: 8),
           // Honest microcopy: the server sends real OTPs in production.
@@ -470,13 +551,10 @@ class _AuthGateState extends State<AuthGate> {
             ],
           ),
           const SizedBox(height: 16),
-          FilledButton(
-            onPressed: _sending ? null : _sendOtp,
-            child: _sending
-                ? const SizedBox(
-                    width: 20, height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text("Continue"),
+          OppaPrimaryButton(
+            label: "Continue",
+            onPressed: _sending || _phoneError() != null ? null : _sendOtp,
+            busy: _sending,
           ),
           const SizedBox(height: 24),
           // The look picker is its own onboarding step (approved art), not a
@@ -495,10 +573,9 @@ class _AuthGateState extends State<AuthGate> {
         key: key,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _brandHeader(
-            theme,
-            title: "Verify your number",
-            body: "We sent a 6-digit code to "
+          _stepHeader(
+            "Verify your number",
+            "We sent a 6-digit code to "
                 "${_maskPhone(_phoneController.text.trim())}",
           ),
           if (DemoMode.enabled) ...[
@@ -521,16 +598,30 @@ class _AuthGateState extends State<AuthGate> {
             ),
             const SizedBox(height: 16),
           ],
-          TextField(
+          // The reference shows six separate boxes; one wide, letter-spaced
+          // field is the accessible equivalent (one control, one screen-reader
+          // announcement) while keeping the same visual rhythm.
+          OppaTextField(
             controller: _codeController,
             keyboardType: TextInputType.number,
             maxLength: 6,
+            textInputAction: TextInputAction.done,
             textAlign: TextAlign.center,
-            style: theme.textTheme.headlineMedium?.copyWith(letterSpacing: 10),
-            decoration: const InputDecoration(
-              labelText: "6-digit code",
-              counterText: "",
-            ),
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            onChanged: (_) {
+              // Rebuild so the Verify button enables the moment the code is
+              // complete. SetState is guarded because the field can emit while
+              // the widget is being disposed by a step change.
+              if (mounted) setState(() {});
+            },
+            onSubmitted: (_) => _verifying ? null : _verifyOtp(),
+            label: "6-digit code",
+            // Clear validation as soon as the code is complete.
+            error: _codeController.text.length == 6
+                ? null
+                : (DemoMode.enabled && _codeController.text.isNotEmpty
+                    ? 'Enter the 6-digit code'
+                    : null),
           ),
           const SizedBox(height: 8),
           Center(
@@ -546,13 +637,12 @@ class _AuthGateState extends State<AuthGate> {
             ),
           ),
           const SizedBox(height: 8),
-          FilledButton(
-            onPressed: _verifying ? null : _verifyOtp,
-            child: _verifying
-                ? const SizedBox(
-                    width: 20, height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text("Verify"),
+          OppaPrimaryButton(
+            label: "Verify",
+            onPressed: _verifying || _codeController.text.length != 6
+                ? null
+                : _verifyOtp,
+            busy: _verifying,
           ),
           TextButton(
             onPressed: _verifying ? null : () => setState(() => _step = _AuthStep.phone),
@@ -565,10 +655,10 @@ class _AuthGateState extends State<AuthGate> {
         key: key,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _brandHeader(
-            theme,
-            title: "Create your profile",
-            body: "What should we call you? Speak it — no spelling needed.",
+          _stepHeader(
+            "Create your profile",
+            "Add your details so friends can recognise you. "
+                "Speak it — no spelling needed.",
           ),
           // Voice / type mode switch (approved UI: "Type ⌨ | 🎙 Speak").
           SegmentedButton<bool>(
@@ -626,7 +716,12 @@ class _AuthGateState extends State<AuthGate> {
                         icon: const Icon(Icons.clear),
                       ),
               ),
-              onChanged: (_) => setState(() {}),
+              onChanged: (_) {
+              // Rebuild so the Verify button enables the moment the code is
+              // complete. SetState is guarded because the field can emit while
+              // the widget is being disposed by a step change.
+              if (mounted) setState(() {});
+            },
             ),
           ] else ...[
             TextField(
@@ -638,11 +733,11 @@ class _AuthGateState extends State<AuthGate> {
             ),
           ],
           const SizedBox(height: 16),
-          FilledButton(
-            onPressed: _finishProfile,
-            child: Text(_nameController.text.trim().isEmpty
+          OppaPrimaryButton(
+            label: _nameController.text.trim().isEmpty
                 ? "Skip — add it later"
-                : "Continue"),
+                : "Continue",
+            onPressed: _finishProfile,
           ),
         ],
       );
@@ -659,10 +754,10 @@ class _AuthGateState extends State<AuthGate> {
       key: key,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _brandHeader(
-          theme,
-          title: "Add a profile picture",
-          body: "Put a face to your name — or keep it simple for now.",
+        _stepHeader(
+          "Choose profile picture",
+          "Add a photo or keep it simple for now. Your name identifies you "
+              "either way.",
         ),
         const SizedBox(height: 8),
         Center(
@@ -723,9 +818,9 @@ class _AuthGateState extends State<AuthGate> {
               color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
         ),
         const SizedBox(height: 20),
-        FilledButton(
+        OppaPrimaryButton(
+          label: "Continue",
           onPressed: _enterOppaIdStep,
-          child: const Text("Continue"),
         ),
       ],
     );
@@ -741,11 +836,10 @@ class _AuthGateState extends State<AuthGate> {
       key: key,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _brandHeader(
-          theme,
-          title: "Choose your OPPA ID",
-          body: "This is your unique identity on OPPA. People can find you "
-              "by this name — friends can still use your phone number.",
+        _stepHeader(
+          "Choose your OPPA ID",
+          "This is your unique identity on OPPA. People can find you by this "
+              "name — friends can still use your phone number.",
         ),
         Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -810,21 +904,18 @@ class _AuthGateState extends State<AuthGate> {
               color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
         ),
         const SizedBox(height: 16),
-        FilledButton(
+        OppaPrimaryButton(
+          label: switch (state) {
+            _HandleState.available => "Continue",
+            _HandleState.checking => "Checking…",
+            _HandleState.taken => "That name is taken",
+            _HandleState.invalid => "That name is not allowed",
+            _HandleState.unknown => "Check a name to continue",
+          },
           onPressed: (state == _HandleState.available && !_claiming)
               ? _claimHandleAndContinue
               : null,
-          child: _claiming
-              ? const SizedBox(
-                  width: 20, height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2))
-              : Text(switch (state) {
-                  _HandleState.available => "Continue",
-                  _HandleState.checking => "Checking…",
-                  _HandleState.taken => "That name is taken",
-                  _HandleState.invalid => "That name is not allowed",
-                  _HandleState.unknown => "Check a name to continue",
-                }),
+          busy: _claiming,
         ),
         TextButton(
           onPressed: _claiming
@@ -860,19 +951,18 @@ class _AuthGateState extends State<AuthGate> {
         key: key,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _brandHeader(
-            theme,
-            title: "Choose Your OPPA Look",
-            body: "Pick the look that feels like you. You can change it "
-                "anytime in Settings.",
+          _stepHeader(
+            "Choose Your OPPA Look",
+            "Pick the look that feels like you. Three unique themes, the same "
+                "OPPA experience. You can change it anytime in Settings.",
           ),
           const SizedBox(height: 8),
           ThemePicker(
               themeId: widget.themeId, onThemeChanged: widget.onThemeChanged),
           const SizedBox(height: 16),
-          FilledButton(
+          OppaPrimaryButton(
+            label: "Continue",
             onPressed: () => setState(() => _step = _AuthStep.security),
-            child: const Text("Continue"),
           ),
           if (_claimedOppaId != null)
             Padding(
@@ -893,11 +983,10 @@ class _AuthGateState extends State<AuthGate> {
         key: key,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _brandHeader(
-            theme,
-            title: "Set up security",
-            body: "Your account is tied to this device. Here is exactly "
-                "what is protecting it today.",
+          _stepHeader(
+            "Set up security",
+            "Your account is tied to this device. Here is exactly what is "
+                "protecting it today.",
           ),
           const SizedBox(height: 8),
           Card(
@@ -929,9 +1018,9 @@ class _AuthGateState extends State<AuthGate> {
             ),
           ),
           const SizedBox(height: 16),
-          FilledButton(
+          OppaPrimaryButton(
+            label: "Continue",
             onPressed: () => setState(() => _step = _AuthStep.done),
-            child: const Text("Continue"),
           ),
         ],
       );
@@ -967,9 +1056,9 @@ class _AuthGateState extends State<AuthGate> {
                 color: theme.colorScheme.onSurface.withValues(alpha: 0.7)),
           ),
           const SizedBox(height: 32),
-          FilledButton(
+          OppaPrimaryButton(
+            label: "Start OPPA",
             onPressed: _startOppa,
-            child: const Text("Start OPPA"),
           ),
           TextButton(
             onPressed: _startOppa,

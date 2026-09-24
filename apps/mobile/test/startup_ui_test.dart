@@ -172,6 +172,10 @@ void main() {
       expect(find.text("6-digit code"), findsOneWidget);
       await tester.enterText(
           find.widgetWithText(TextField, "6-digit code"), "000000");
+      // The Verify button enables as soon as the code is complete, which
+      // happens in a rebuild triggered by onChanged — pump so the enabled
+      // state is committed before the tap.
+      await tester.pumpAndSettle();
       await tester.tap(find.text("Verify"));
       await tester.pumpAndSettle();
 
@@ -188,7 +192,7 @@ void main() {
 
       // 5. Profile picture step: rendered like the reference, but photo upload
       //    is honestly not part of V1 — no fake avatarUrl is written.
-      expect(find.text("Add a profile picture"), findsOneWidget);
+      expect(find.text("Choose profile picture"), findsOneWidget);
       expect(find.text("Camera"), findsOneWidget);
       expect(find.text("Gallery"), findsOneWidget);
       await tester.ensureVisible(find.text("Continue"));
@@ -252,6 +256,10 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(
           find.widgetWithText(TextField, "6-digit code"), "000000");
+      // The Verify button enables as soon as the code is complete, which
+      // happens in a rebuild triggered by onChanged — pump so the enabled
+      // state is committed before the tap.
+      await tester.pumpAndSettle();
       await tester.tap(find.text("Verify"));
       await tester.pumpAndSettle();
       await tester.ensureVisible(find.text("Skip — add it later"));
