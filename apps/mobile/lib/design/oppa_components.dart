@@ -790,6 +790,75 @@ class OppaStatePanel extends StatelessWidget {
   }
 }
 
+/// The OPPA Pulse orb at a given size — the small brand mark used in app bars
+/// and the home header, so the logo on screen is always the real painted mark
+/// rather than a text approximation.
+class OppaBrandOrb extends StatelessWidget {
+  const OppaBrandOrb({super.key, this.size = 34});
+
+  final double size;
+
+  @override
+  Widget build(BuildContext context) => CustomPaint(
+        size: Size.square(size),
+        painter: const OppaPulsePainter(),
+      );
+}
+
+/// 2x2 grid of branded quick-action tiles (Translator / Connect / Support /
+/// Settings) matching the reference home screen.
+class OppaQuickActions extends StatelessWidget {
+  const OppaQuickActions({super.key, required this.items});
+
+  final List<({IconData icon, String label, VoidCallback onTap})> items;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      mainAxisSpacing: OppaSpace.sm,
+      crossAxisSpacing: OppaSpace.sm,
+      childAspectRatio: 2.3,
+      children: [
+        for (final item in items)
+          OppaCard(
+            onTap: item.onTap,
+            padding: const EdgeInsets.symmetric(
+                horizontal: OppaSpace.md, vertical: OppaSpace.sm),
+            child: Row(
+              children: [
+                Container(
+                  height: 34,
+                  width: 34,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(OppaRadii.sm),
+                    color: t.primary.withValues(alpha: 0.14),
+                  ),
+                  child: Icon(item.icon, size: 19, color: t.primary),
+                ),
+                const SizedBox(width: OppaSpace.sm),
+                Expanded(
+                  child: Text(
+                    item.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context)
+                        .textTheme
+                        .labelLarge
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 /// Shimmer-free, calm loading block. Replaces naked spinners on content areas
 /// so loading reads as part of the design rather than a raw Material default.
 class OppaLoadingList extends StatelessWidget {

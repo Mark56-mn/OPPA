@@ -145,10 +145,12 @@ void main() {
 
       // Authenticated from storage → the 4-tab personal shell, no AuthGate.
       expect(find.byType(AuthGate), findsNothing);
-      expect(find.widgetWithText(Tab, "Chats"), findsOneWidget);
-      expect(find.widgetWithText(Tab, "Wallet"), findsOneWidget);
-      expect(find.widgetWithText(Tab, "Calls"), findsOneWidget);
-      expect(find.widgetWithText(Tab, "Me"), findsOneWidget);
+      final bottomNav = find.byKey(const ValueKey("oppa-bottom-nav"));
+      expect(bottomNav, findsOneWidget);
+      for (final label in ["Chats", "Wallet", "Calls", "Me"]) {
+        expect(find.descendant(of: bottomNav, matching: find.text(label)),
+            findsOneWidget);
+      }
     },
   );
 
@@ -237,7 +239,10 @@ void main() {
       await tester.tap(find.text("Start OPPA"), warnIfMissed: false);
       await tester.pumpAndSettle();
 
-      expect(find.widgetWithText(Tab, "Chats"), findsOneWidget);
+      final bottomNav = find.byKey(const ValueKey("oppa-bottom-nav"));
+      expect(bottomNav, findsOneWidget);
+      expect(find.descendant(of: bottomNav, matching: find.text("Chats")),
+          findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsNothing);
     },
   );

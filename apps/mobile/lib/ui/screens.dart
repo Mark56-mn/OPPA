@@ -4,6 +4,7 @@ import "../core/connectivity_service.dart";
 import "../core/outbound_queue.dart";
 import "../core/session_store.dart";
 import "../data/repositories.dart";
+import "../design/oppa_components.dart";
 import "../design/oppa_themes.dart";
 import "widgets/common.dart";
 import "screens/call_screen.dart";
@@ -12,6 +13,126 @@ import "screens/me_screens.dart";
 import "screens/wallet_screens.dart";
 
 export "screens/auth_gate.dart";
+
+/// Branded bottom navigation: Chats · Wallet · Calls · Me.
+///
+/// The default Material [TabBar] left a plain grey indicator that did not
+/// match the reference. This renders the active tab in the theme's primary
+/// colour with a soft glow behind it, keeps every target a full 48dp touch
+/// area, and is driven by the same [TabController] so the workspace hand-off
+/// (`_tabs.animateTo(0)`) still works.
+class _OppaBottomNav extends StatelessWidget {
+  const _OppaBottomNav({required this.controller});
+
+  final TabController controller;
+
+  static const _items = <({IconData icon, String label})>[
+    (icon: Icons.chat_bubble_outline_rounded, label: "Chats"),
+    (icon: Icons.account_balance_wallet_outlined, label: "Wallet"),
+    (icon: Icons.call_outlined, label: "Calls"),
+    (icon: Icons.person_outline_rounded, label: "Me"),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final t = context.tokens;
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final selected = controller.index;
+        return Container(
+          key: const ValueKey("oppa-bottom-nav"),
+          decoration: BoxDecoration(
+            color: t.surface,
+            border: Border(
+                top: BorderSide(
+                    color: t.onSurface.withValues(alpha: 0.08))),
+          ),
+          child: SafeArea(
+            top: false,
+            child: SizedBox(
+              height: 62,
+              child: Row(
+                children: [
+                  for (var i = 0; i < _items.length; i++)
+                    Expanded(
+                      child: _BottomNavItem(
+                        icon: _items[i].icon,
+                        label: _items[i].label,
+                        selected: i == selected,
+                        onTap: () => controller.animateTo(i),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _BottomNavItem extends StatelessWidget {
+  const _BottomNavItem({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final t = context.tokens;
+    final color = selected ? t.primary : t.onSurface.withValues(alpha: 0.6);
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: InkWell(
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(999),
+                color: selected
+                    ? t.primary.withValues(alpha: 0.14)
+                    : Colors.transparent,
+                boxShadow: selected
+                    ? [
+                        BoxShadow(
+                          color: t.primary.withValues(alpha: 0.28),
+                          blurRadius: 12,
+                        )
+                      ]
+                    : null,
+              ),
+              child: Icon(icon, size: 22, color: color),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              label,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: color,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 /// Bottom navigation shell matching the approved personal-app art:
 ///   Chats · Wallet · Calls · Me
@@ -173,15 +294,7 @@ class _HomeShellState extends State<HomeShell>
                 ],
               ),
             ),
-            bottomNavigationBar: TabBar(
-              controller: _tabs,
-              tabs: const [
-                Tab(icon: Icon(Icons.chat_bubble_outline), text: "Chats"),
-                Tab(icon: Icon(Icons.account_balance_wallet_outlined), text: "Wallet"),
-                Tab(icon: Icon(Icons.call_outlined), text: "Calls"),
-                Tab(icon: Icon(Icons.person_outline), text: "Me"),
-              ],
-            ),
+            bottomNavigationBar: _OppaBottomNav(controller: _tabs),
         );
       },
     );
